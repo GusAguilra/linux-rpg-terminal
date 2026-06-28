@@ -7,15 +7,15 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0e0a;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:'Courier New',monospace}
-#app{width:880px;max-width:98vw;border:2px solid #2a4a2a;border-radius:6px;overflow:hidden}
-#map-wrap{position:relative;background:#1a2a1a;height:360px;overflow:hidden}
+#app{width:880px;max-width:98vw;height:96vh;max-height:840px;display:flex;flex-direction:column;border:2px solid #2a4a2a;border-radius:6px;overflow:hidden}
+#map-wrap{position:relative;background:#1a2a1a;height:360px;flex:0 0 auto;overflow:hidden}
 #map{display:block;width:100%;height:100%;image-rendering:pixelated}
 #map-ui{position:absolute;top:0;left:0;right:0;padding:8px 12px;display:flex;justify-content:space-between;pointer-events:none}
 #map-ui .loc{color:#ffd54f;font-size:13px;background:rgba(0,0,0,.7);padding:4px 10px;border-radius:3px}
 #map-ui .hud{color:#fff;font-size:12px;background:rgba(0,0,0,.7);padding:4px 10px;border-radius:3px;display:flex;gap:12px}
 #map-ui .hud .hp{color:#ef5350}
 #map-ui .hud .gold{color:#ffd54f}
-#term{background:#0d120d;padding:8px 10px;height:340px;overflow-y:auto;border-top:1px solid #2a4a2a;font-size:14px;line-height:1.5;scroll-behavior:smooth}
+#term{background:#0d120d;padding:8px 10px;flex:1 1 auto;min-height:340px;overflow-y:auto;border-top:1px solid #2a4a2a;font-size:14px;line-height:1.5;scroll-behavior:smooth}
 #term::-webkit-scrollbar{width:5px}
 #term::-webkit-scrollbar-track{background:#0d120d}
 #term::-webkit-scrollbar-thumb{background:#2a4a2a;border-radius:2px}
@@ -32,7 +32,7 @@ body{background:#0a0e0a;display:flex;justify-content:center;align-items:center;m
 .term-line.title{color:#ffd54f;font-weight:bold}
 .term-line.dim{color:#2a5a2a}
 .term-line.success{color:#ffd54f;font-weight:bold}
-#input-row{display:flex;align-items:center;background:#0d120d;padding:4px 10px 8px;border-top:1px solid #1a2a1a}
+#input-row{display:flex;align-items:center;background:#0d120d;padding:4px 10px 8px;border-top:1px solid #1a2a1a;flex:0 0 auto}
 #prompt{color:#a5d6a7;white-space:pre;user-select:none;font-size:14px}
 #cmd{flex:1;background:transparent;border:none;outline:none;color:#00e676;font:inherit;font-size:14px;caret-color:#00e676;padding:0 0 0 6px}
 #cmd::placeholder{color:#1a4a1a}
@@ -66,6 +66,7 @@ canvas.width = W; canvas.height = H;
 const TILE = 40;
 const COLS = Math.floor(W / TILE); // 22
 const ROWS = Math.floor(H / TILE); // 9
+let _vignette = null; // cache de gradiente de viñeta
 
 // ─── TILE TYPES & COLORS ───
 const T = {
@@ -76,30 +77,83 @@ const T = {
 
 const tileDraw = {};
 tileDraw[T.FLOOR] = (x,y) => {
-  ctx.fillStyle=(x+y)%2?'#4a4a4a':'#525252';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+  const px=x*TILE, py=y*TILE;
+  ctx.fillStyle=(x+y)%2?'#474747':'#525252';ctx.fillRect(px,py,TILE,TILE);
+  // junta de baldosa
+  ctx.fillStyle='rgba(0,0,0,0.18)';ctx.fillRect(px,py,TILE,1);ctx.fillRect(px,py,1,TILE);
+  ctx.fillStyle='rgba(255,255,255,0.04)';ctx.fillRect(px+1,py+1,TILE-2,1);
+  // motas de desgaste deterministas
+  if((x*5+y*11)%4===0){ctx.fillStyle='rgba(0,0,0,0.13)';ctx.fillRect(px+9,py+24,4,3);}
+  if((x*3+y*7)%5===0){ctx.fillStyle='rgba(0,0,0,0.10)';ctx.fillRect(px+26,py+11,3,3);}
 };
 tileDraw[T.GRASS] = (x,y) => {
-  ctx.fillStyle=['#3a7a1e','#3e7e22','#36801a'][(x*7+y*13)%3];ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
-  if((x+y)%4===0){ctx.fillStyle='#2d6a14';ctx.fillRect(x*TILE+6,y*TILE+18,6,3);}
+  const px=x*TILE, py=y*TILE;
+  // base con variación
+  ctx.fillStyle=['#3a7a1e','#3e7e22','#36801a','#347818'][(x*7+y*13)%4];ctx.fillRect(px,py,TILE,TILE);
+  // manchas de luz/sombra para dar volumen
+  ctx.fillStyle='rgba(255,255,80,0.05)';ctx.fillRect(px,py,TILE,TILE/2);
+  ctx.fillStyle='rgba(0,0,0,0.06)';ctx.fillRect(px,py+TILE/2,TILE,TILE/2);
+  // briznas de pasto (deterministas, leve mecida con animTime)
+  const sway=Math.sin((animTime+x*9+y*5)/22)*1.2;
+  ctx.fillStyle='#2d6a14';
+  if((x+y)%3===0){ctx.fillRect(px+6+sway,py+22,2,8);ctx.fillRect(px+10+sway,py+25,2,5);}
+  if((x*2+y)%4===0){ctx.fillStyle='#4a9a2a';ctx.fillRect(px+26-sway,py+18,2,9);ctx.fillRect(px+30-sway,py+22,2,6);}
+  // florecitas ocasionales
+  if((x*13+y*7)%11===0){ctx.fillStyle='#f0e040';ctx.fillRect(px+18,py+12,3,3);ctx.fillStyle='#fff';ctx.fillRect(px+19,py+13,1,1);}
 };
 tileDraw[T.WALL] = (x,y) => {
-  ctx.fillStyle='#5a5a5a';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
-  ctx.fillStyle='#4a4a4a';ctx.fillRect(x*TILE+1,y*TILE+1,TILE-2,TILE-2);
-  ctx.fillStyle='#6a6a6a';ctx.fillRect(x*TILE+6,y*TILE+6,28,4);ctx.fillRect(x*TILE+6,y*TILE+18,28,4);ctx.fillRect(x*TILE+6,y*TILE+30,28,4);
+  const px=x*TILE, py=y*TILE;
+  ctx.fillStyle='#5a5a5a';ctx.fillRect(px,py,TILE,TILE);
+  // bloques de piedra (patrón de ladrillo desfasado)
+  const off=(y%2)*10;
+  ctx.fillStyle='#646464';
+  ctx.fillRect(px+2-off,py+2,18,9);ctx.fillRect(px+22-off,py+2,18,9);
+  ctx.fillRect(px+12-off,py+13,18,9);ctx.fillRect(px-8+off,py+13,18,9);
+  ctx.fillRect(px+2-off,py+24,18,9);ctx.fillRect(px+22-off,py+24,18,9);
+  // luces y sombras de relieve
+  ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect(px+2-off,py+2,18,2);ctx.fillRect(px+12-off,py+13,18,2);
+  ctx.fillStyle='rgba(0,0,0,0.25)';ctx.fillRect(px,py+TILE-3,TILE,3);
 };
 tileDraw[T.TREE] = (x,y) => {
-  ctx.fillStyle='#3a2a1a';ctx.fillRect(x*TILE+14,y*TILE+28,12,12);
-  ctx.fillStyle='#1a4a1a';ctx.beginPath();ctx.arc(x*TILE+20,y*TILE+16,16,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#1e521e';ctx.beginPath();ctx.arc(x*TILE+12,y*TILE+12,10,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#1a4a1a';ctx.beginPath();ctx.arc(x*TILE+28,y*TILE+12,10,0,Math.PI*2);ctx.fill();
+  const px=x*TILE, py=y*TILE;
+  const sway=Math.sin((animTime+x*11)/26)*1.5;
+  // sombra en el suelo
+  ctx.fillStyle='rgba(0,0,0,0.22)';ctx.beginPath();ctx.ellipse(px+20,py+36,13,4,0,0,Math.PI*2);ctx.fill();
+  // tronco
+  ctx.fillStyle='#4a3320';ctx.fillRect(px+16,py+26,8,12);
+  ctx.fillStyle='#3a2614';ctx.fillRect(px+16,py+26,3,12);
+  // copa en capas (sombra → base → luz)
+  ctx.fillStyle='#163d16';ctx.beginPath();ctx.arc(px+20+sway,py+18,17,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1f5a1f';ctx.beginPath();ctx.arc(px+13+sway,py+13,11,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1f5a1f';ctx.beginPath();ctx.arc(px+28+sway,py+14,10,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#2e7a2e';ctx.beginPath();ctx.arc(px+16+sway,py+10,7,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='rgba(150,220,120,0.35)';ctx.beginPath();ctx.arc(px+15+sway,py+9,4,0,Math.PI*2);ctx.fill();
 };
 tileDraw[T.WATER] = (x,y) => {
-  ctx.fillStyle='#2a6a9a';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
-  ctx.fillStyle='#3a7aaa';ctx.fillRect(x*TILE+4,y*TILE+8,10,3);ctx.fillRect(x*TILE+18,y*TILE+22,14,3);ctx.fillRect(x*TILE+8,y*TILE+32,8,2);
+  const px=x*TILE, py=y*TILE;
+  ctx.fillStyle='#225f92';ctx.fillRect(px,py,TILE,TILE);
+  // degradado vertical sutil
+  ctx.fillStyle='rgba(255,255,255,0.05)';ctx.fillRect(px,py,TILE,TILE/2);
+  // olas animadas
+  const t=animTime/20, ph=x*0.6+y*0.9;
+  ctx.fillStyle='rgba(170,210,240,0.55)';
+  for(let i=0;i<3;i++){
+    const wy=py+8+i*12, wx=px+4+Math.sin(t+ph+i)*6;
+    ctx.fillRect(wx,wy,12,2);
+  }
+  ctx.fillStyle='rgba(255,255,255,0.35)';
+  ctx.fillRect(px+6+Math.sin(t+ph)*5,py+6,5,1);
 };
 tileDraw[T.PATH] = (x,y) => {
-  ctx.fillStyle=['#b8985a','#b49a56','#bc9658'][(x+y)%3];ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
-  ctx.fillStyle='#a88848';ctx.fillRect(x*TILE+6,y*TILE+18,28,3);
+  const px=x*TILE, py=y*TILE;
+  ctx.fillStyle=['#b8985a','#b49a56','#bc9658','#b09254'][(x*3+y)%4];ctx.fillRect(px,py,TILE,TILE);
+  // bordes con tierra oscura
+  ctx.fillStyle='rgba(0,0,0,0.10)';ctx.fillRect(px,py,TILE,2);ctx.fillRect(px,py+TILE-2,TILE,2);
+  // piedritas deterministas
+  ctx.fillStyle='#9a7a3e';
+  if((x+y)%2===0){ctx.fillRect(px+8,py+12,4,3);ctx.fillRect(px+24,py+26,5,3);}
+  else{ctx.fillRect(px+14,py+22,4,3);ctx.fillRect(px+28,py+10,3,3);}
+  ctx.fillStyle='rgba(255,255,255,0.10)';ctx.fillRect(px+9,py+12,4,1);
 };
 tileDraw[T.DOOR] = (x,y) => {
   ctx.fillStyle='#6a4a2a';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
@@ -178,6 +232,7 @@ function initWorld() {
     {type:'door',x:3,y:2,label:'castle/',room:'/castle',desc:'Camino al castillo'},
     {type:'door',x:12,y:1,label:'forest/',room:'/forest',desc:'Entrada al bosque'},
     {type:'door',x:18,y:4,label:'village/',room:'/village',desc:'Camino a la aldea'},
+    {type:'door',x:18,y:8,label:'mountain/',room:'/mountain',desc:'Sendero a la Montaña del Kernel'},
     {type:'npc',x:6,y:4,label:'Guard',desc:'Un guardia real con armadura reluciente.',dialog:['El reino está en peligro... el Rey ha caído bajo un hechizo.','Adéntrate en el bosque y busca la cueva.'],dialogAfter:['¡Has salvado el reino, héroe! Tu manejo de Linux es tan letal como tu espada.','El Rey ha despertado y quiere darte las gracias en persona.'],patrol:{dir:0,steps:2}},
     {type:'item',x:14,y:7,label:'letter.txt',icon:'📜',desc:'CARTA DEL VIEJO ALDRIC\n━━━━━━━━━━━━━━━━━━━━━\n"Viajero, si lees esto aún hay esperanza.\nEl Rey ha caído bajo un hechizo oscuro.\nBusca la espada ancestral y adéntrate en la cueva."',takeable:false},
   ]);
@@ -359,6 +414,30 @@ function initWorld() {
     {type:'door',x:10,y:6,label:'shop/',room:'/village/shop',desc:'Tienda general'},
     {type:'door',x:18,y:7,label:'../',room:'/',desc:'Volver al camino'},
     {type:'npc',x:15,y:3,label:'Brom',desc:'Un aldeano con ropa de trabajo.',dialog:['Bienvenido a Villa Roble Alto.','En la posada puedes descansar, y en la tienda hay provisiones.'],dialogAfter:['¡Viva el héroe! Gracias a ti podemos vivir en paz.','Nunca olvides: el conocimiento de Linux que adquiriste es tu mejor arma.']},
+    {type:'npc',x:4,y:2,label:'Greta',desc:'📚 GRETA — La Archivista\nLleva un pergamino lleno de nombres.',challengeId:'greta',dialogDone:['"¡Gracias de nuevo, archivista honorario!"','"Mi lista quedó perfecta gracias a ti."'],dialog:[
+      'Necesito anotar la palabra clave "dragon" en mi lista.',
+      'Escríbela en un archivo "lista.txt" y búscala con grep.',
+      '💡 Paso 1:  echo "dragon" > lista.txt',
+      '💡 Paso 2:  grep dragon lista.txt',
+    ],onTalk:()=>{
+      if(homeFiles['lista.txt']!==undefined && homeFiles['lista.txt'].toLowerCase().includes('dragon'))
+        return '🔎 "¡Bien, ya está en lista.txt! Ahora búscala con: grep dragon lista.txt"';
+      return null;
+    }},
+    {type:'npc',x:8,y:2,label:'Otto',desc:'🗂️ OTTO — El Ordenado\nObsesionado con tener todo en su carpeta.',challengeId:'otto',dialogDone:['"¡Todo en su lugar gracias a ti!"','"Mi escritorio nunca estuvo tan ordenado."'],dialog:[
+      'Mi escritorio es un caos. Necesito un respaldo ordenado.',
+      'Crea una carpeta "backups" y mete dentro un archivo "config.txt".',
+      '💡 mkdir backups   →   touch config.txt   →   mv config.txt backups/config.txt',
+    ],onTalk:()=>{
+      if(homeFiles['DIR:backups']!==undefined)
+        return '🗂️ "¡Ya creaste backups/! Ahora crea config.txt y muévelo: mv config.txt backups/config.txt"';
+      return null;
+    }},
+    {type:'npc',x:12,y:2,label:'Nettie',desc:'📡 NETTIE — La Operadora de Red\nRevisa cables y antenas.',challengeId:'nettie',dialogDone:['"¡La red sigue estable gracias a ti!"','"Cuando quieras te enseño a usar traceroute."'],dialog:[
+      'El servidor "kernel.local" no responde y no sé si está vivo.',
+      '¿Puedes comprobar si responde por mí?',
+      '💡 Usa: ping kernel.local',
+    ]},
   ]);
 
   defRoom('/village/inn', parseMap([
@@ -425,6 +504,48 @@ function initWorld() {
       return ['⚔️ Compraste Espada de Acero. Usa "./sword" para equiparla.','out'];
     }},
   ]);
+
+  // ─── MONTAÑA DEL KERNEL (área extra) ───
+  defRoom('/mountain', parseMap([
+    '######################',
+    '#WW,,,,,,,,,,,,,,,,WW#',
+    '#W,,,,,,,,,,,,,,,,,,W#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,PPP,,,,,,,,,,,,,,#',
+    '#,,,PPP,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#W,,,,,,,,,,,,,,,,,,W#',
+    '#WW,,,,,,,,,,,,,,,,WW#',
+  ], L), [
+    {type:'player',x:10,y:7},
+    {type:'door',x:18,y:5,label:'../',room:'/',desc:'Bajar de la montaña'},
+    {type:'door',x:10,y:1,label:'summit/',room:'/mountain/summit',desc:'La cima de la montaña'},
+    {type:'npc',x:5,y:3,label:'Kerwin',desc:'🏔️ KERWIN — El Montañista\nGuardián de la cima, abrigado contra el frío del kernel.',dialog:['¡Bienvenido a la montaña, escalador! Yo vigilo el camino a la cima.','Para subir necesitas el ejecutable "ascend.sh".','💡 Está en el suelo, pero sin permisos. Usa "chmod +x ascend.sh" y luego "./ascend.sh".'],dialogAfter:['La cima está en buenas manos contigo. ¡Sigue compilando conocimiento!','Recuerda: en Linux todo es un archivo. Hasta una montaña.']},
+    {type:'item',x:8,y:4,label:'ascend.sh',icon:'📜',desc:'SCRIPT: ascend.sh\nUn script para escalar la cima.\n\n💡 Sin permisos de ejecución. Usa "chmod +x ascend.sh".',takeable:false,usable:true,useAction:()=>{
+      if(!scriptExecutable['ascend.sh'])return ['❌ Permiso denegado: ascend.sh no es ejecutable. Usa "chmod +x ascend.sh".','err'];
+      summitUnlocked=true;
+      tPrint('🏔️  Ejecutas ascend.sh... el camino a la cima se abre.','success');
+      return ['✅ Ahora puedes "cd summit/" para llegar a la cima.','out'];
+    }},
+    {type:'item',x:14,y:6,label:'gold_vein.txt',icon:'💰',desc:'VETA DE ORO\nMineral brillante incrustado en la roca.\n\n💡 Usa "cp gold_vein.txt ~/".',takeable:true,onTake:()=>{player.gold+=40;return '💰 +40 de oro de la veta.'}},
+  ]);
+
+  defRoom('/mountain/summit', parseMap([
+    '######################',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,FFF,,FFF,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,D,,,,,,,,,#',
+  ], L), [
+    {type:'player',x:10,y:7},
+    {type:'door',x:10,y:8,label:'../',room:'/mountain',desc:'Bajar de la cima'},
+    {type:'enemy',x:10,y:3,label:'Kernel_Panic',hp:80,maxHp:80,atk:18,def:9,xp:120,gold:80,nopatrol:true,dialog:'KERNEL PANIC — una entidad de errores fatales y código corrupto. Solo un experto puede estabilizarla.'},
+    {type:'item',x:16,y:2,label:'crown.txt',icon:'👑',desc:'CORONA DEL KERNEL\nReluce con el poder del código abierto.\n\n💡 Usa "cp crown.txt ~/". +5 ATK, +5 DEF.',takeable:true,onTake:()=>{player.atk+=5;player.def+=5;player.inventory.push('crown.txt');return '👑 ¡Corona del Kernel equipada! +5 ATK, +5 DEF.'}},
+  ]);
 }
 
 // ─── GAME STATE ───
@@ -446,6 +567,11 @@ let bossDefeated = false;
 let hintEl = null;
 let lanternOn = false;
 const rewardedEnemies = new Set();
+const scriptExecutable = {}; // {nombre: true} → scripts con chmod +x
+let summitUnlocked = false;  // se abre tras ejecutar ascend.sh
+const challengesDone = {};   // {id: true} → retos de NPCs completados
+let pingedHosts = {};        // hosts a los que hiciste ping (para retos)
+let grepFoundDragon = false; // usó grep dragon lista.txt con éxito
 
 const diary = [];
 function diaryAdd(cmd, explanation) {
@@ -654,7 +780,10 @@ function tryMove(dx, dy) {
     return;
   }
 
+  const oldX=player.px, oldY=player.py;
   player.px = nx; player.py = ny;
+  spawnParticles(oldX, oldY, 'rgba(180,180,160,0.7)', 3, 1.2);
+  AUDIO.play('select');
   renderRoom();
 
   // Check item pickup
@@ -893,11 +1022,56 @@ function moveToTargetAdjacent(tx, ty, callback) {
 let hitEffect = null;
 let playerHitEffect = null;
 
+// ─── VISUAL FX: shake, floating text, particles ───
+let shakeT = 0, shakeMag = 0;
+function screenShake(mag=6, frames=8){ shakeMag=mag; shakeT=frames; }
+const floaters = []; // {x,y,text,color,life,vy}
+function addFloater(tileX, tileY, text, color='#fff'){
+  floaters.push({x:tileX*TILE+20, y:tileY*TILE+10, text, color, life:40, vy:-0.7});
+}
+const particles = []; // {x,y,vx,vy,life,color,size}
+function spawnParticles(tileX, tileY, color, count=10, spread=2.5){
+  for(let i=0;i<count;i++){
+    const a=Math.random()*Math.PI*2, s=Math.random()*spread+0.5;
+    particles.push({x:tileX*TILE+20, y:tileY*TILE+20, vx:Math.cos(a)*s, vy:Math.sin(a)*s-0.5,
+      life:Math.random()*20+15, maxLife:35, color, size:Math.random()*3+1});
+  }
+}
+let fadeAlpha = 0; // transición de sala (1 = negro, baja a 0)
+let animTime = 0;  // contador global para animaciones idle
+
+// Bucle de animación continuo (independiente del render por acción)
+function fxLoop(){
+  animTime++;
+  // actualizar partículas
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.x+=p.vx; p.y+=p.vy; p.vy+=0.15; p.life--;
+    if(p.life<=0)particles.splice(i,1);
+  }
+  // actualizar floaters
+  for(let i=floaters.length-1;i>=0;i--){
+    const f=floaters[i];
+    f.y+=f.vy; f.life--;
+    if(f.life<=0)floaters.splice(i,1);
+  }
+  if(shakeT>0)shakeT--;
+  if(fadeAlpha>0)fadeAlpha=Math.max(0,fadeAlpha-0.06);
+  renderRoom();
+  requestAnimationFrame(fxLoop);
+}
+
 // ─── RENDER MAP ───
 function renderRoom() {
   const room = rooms[player.room];
   if (!room) return;
-  ctx.fillStyle='#0a0e0a';ctx.fillRect(0,0,W,H);
+  ctx.save();
+  // screen shake
+  if(shakeT>0){
+    const dx=(Math.random()*2-1)*shakeMag, dy=(Math.random()*2-1)*shakeMag;
+    ctx.translate(dx,dy);
+  }
+  ctx.fillStyle='#0a0e0a';ctx.fillRect(-10,-10,W+20,H+20);
   const tiles = room.tiles;
   const overlays = room.overlays;
 
@@ -914,8 +1088,9 @@ function renderRoom() {
   // Draw overlays
   for (const o of overlays) {
     if (o.type === 'npc') {
-      const sx=o.x*TILE, sy=o.y*TILE;
-      ctx.fillStyle='rgba(0,0,0,0.3)';ctx.beginPath();ctx.ellipse(sx+20,sy+34,12,5,0,0,Math.PI*2);ctx.fill();
+      const sx=o.x*TILE;
+      const sy=o.y*TILE + Math.round(Math.sin((animTime+o.x*7+o.y*3)/16)*1.2);
+      ctx.fillStyle='rgba(0,0,0,0.3)';ctx.beginPath();ctx.ellipse(sx+20,o.y*TILE+34,12,5,0,0,Math.PI*2);ctx.fill();
       const label = o.label;
       if(label==='Guard'||label==='Tower_Guard'){
         // Guard: armor + spear
@@ -956,12 +1131,64 @@ function renderRoom() {
         ctx.fillStyle='#fff';ctx.fillRect(sx+13,sy+4,14,2); // grey hair
         ctx.fillStyle='#5a4a2a';ctx.fillRect(sx+10,sy+14,20,3); // belt
       }else if(label==='Brom'){
-        // Brom: simple brown tunic
-        ctx.fillStyle='#6a5a2a';ctx.fillRect(sx+10,sy+14,20,16); // tunic
-        ctx.fillStyle='#8a7a3a';ctx.fillRect(sx+12,sy+4,16,12); // head
-        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+5,14,7);
+        // Brom: aldeano con chaleco de trabajo y camisa remangada
+        ctx.fillStyle='#9a8a5a';ctx.fillRect(sx+9,sy+14,22,16); // camisa beige
+        ctx.fillStyle='#6a4a2a';ctx.fillRect(sx+11,sy+14,18,16); // chaleco de cuero
+        ctx.fillStyle='#5a3a1a';ctx.fillRect(sx+19,sy+14,2,16); // costura central
+        ctx.fillStyle='#8a5a2a';ctx.fillRect(sx+10,sy+24,20,3); // cinturón
+        ctx.fillStyle='#c89030';ctx.fillRect(sx+18,sy+24,4,3); // hebilla
+        ctx.fillStyle='#7a5a3a';ctx.fillRect(sx+12,sy+4,16,12); // pelo castaño
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+6,14,7); // face
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+8,3,3);ctx.fillRect(sx+22,sy+8,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+9,1,1);ctx.fillRect(sx+23,sy+9,1,1);
+      }else if(label==='Greta'){
+        // Greta: archivista (vestido azul tinta, cuello blanco, pluma)
+        ctx.fillStyle='#2a3a6a';ctx.fillRect(sx+10,sy+14,20,16); // vestido azul tinta
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+14,10,4); // cuello blanco de escriba
+        ctx.fillStyle='#1a2a4a';ctx.fillRect(sx+10,sy+26,20,4); // dobladillo oscuro
+        ctx.fillStyle='#cfcfcf';ctx.fillRect(sx+11,sy+3,18,13); // cabello canoso recogido
+        ctx.fillStyle='#bcbcbc';ctx.fillRect(sx+13,sy+2,12,3); // moño
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+6,14,7); // face
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+8,3,3);ctx.fillRect(sx+22,sy+8,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+9,1,1);ctx.fillRect(sx+23,sy+9,1,1);
+        ctx.fillStyle='rgba(220,220,220,0.35)';ctx.fillRect(sx+13,sy+7,4,3);ctx.fillRect(sx+19,sy+7,4,3); // anteojos
+        ctx.fillStyle='#fff';ctx.fillRect(sx+30,sy+10,2,8); // pluma de archivar
+        ctx.fillStyle='#c0a060';ctx.fillRect(sx+30,sy+18,2,3); // punta de la pluma
+      }else if(label==='Otto'){
+        // Otto: el ordenado (camisa pulcra, corbata, bolsillo con etiquetas)
+        ctx.fillStyle='#dcdcdc';ctx.fillRect(sx+10,sy+14,20,16); // camisa blanca planchada
+        ctx.fillStyle='#3a8a6a';ctx.fillRect(sx+18,sy+14,4,12); // corbata verde
+        ctx.fillStyle='#2a6a4a';ctx.fillRect(sx+18,sy+24,4,2); // nudo/punta corbata
+        ctx.fillStyle='#b8b8b8';ctx.fillRect(sx+12,sy+18,5,5); // bolsillo
+        ctx.fillStyle='#e8a030';ctx.fillRect(sx+13,sy+18,1,5); // etiqueta amarilla
+        ctx.fillStyle='#30a0e8';ctx.fillRect(sx+15,sy+18,1,5); // etiqueta azul
+        ctx.fillStyle='#4a4a4a';ctx.fillRect(sx+12,sy+3,16,11); // pelo prolijo oscuro
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+6,14,7); // face
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+8,3,3);ctx.fillRect(sx+22,sy+8,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+9,1,1);ctx.fillRect(sx+23,sy+9,1,1);
+      }else if(label==='Nettie'){
+        // Nettie: operadora de red (overol técnico, casco, antena/auriculares)
+        ctx.fillStyle='#2a6a7a';ctx.fillRect(sx+10,sy+14,20,16); // overol turquesa
+        ctx.fillStyle='#1a4a5a';ctx.fillRect(sx+13,sy+14,3,16);ctx.fillRect(sx+24,sy+14,3,16); // tirantes
+        ctx.fillStyle='#e8a030';ctx.fillRect(sx+10,sy+22,20,3); // banda reflectante
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+6,14,7); // face
+        ctx.fillStyle='#d8c020';ctx.fillRect(sx+11,sy+3,18,5); // casco amarillo
+        ctx.fillStyle='#b8a010';ctx.fillRect(sx+11,sy+6,18,2); // borde casco
+        ctx.fillStyle='#333';ctx.fillRect(sx+9,sy+7,2,5);ctx.fillRect(sx+29,sy+7,2,5); // auriculares
+        ctx.fillStyle='#333';ctx.fillRect(sx+27,sy+1,2,6); // antena
+        ctx.fillStyle='#ff5050';ctx.fillRect(sx+27,sy-1,2,2); // luz de antena
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+8,3,3);ctx.fillRect(sx+22,sy+8,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+9,1,1);ctx.fillRect(sx+23,sy+9,1,1);
+      }else if(label==='Orin'){
+        // Orin: anciano consejero (túnica azul oscuro, capucha, barba larga)
+        ctx.fillStyle='#2a3a5a';ctx.fillRect(sx+9,sy+13,22,17); // túnica azul oscuro
+        ctx.fillStyle='#3a4a6a';ctx.fillRect(sx+11,sy+2,18,14); // capucha
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+6,14,6); // face
         ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+7,3,3);ctx.fillRect(sx+22,sy+7,3,3);
         ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+8,1,1);ctx.fillRect(sx+23,sy+8,1,1);
+        ctx.fillStyle='#e8e8e8';ctx.fillRect(sx+14,sy+12,12,7); // barba larga blanca
+        ctx.fillStyle='#e8e8e8';ctx.fillRect(sx+16,sy+19,8,3); // punta de barba
+        ctx.fillStyle='#c0a050';ctx.fillRect(sx+9,sy+24,22,2); // cordón dorado
       }else if(label==='Lyra'){
         // Lyra: apron over dress
         ctx.fillStyle='#3a7a3a';ctx.fillRect(sx+10,sy+14,20,16); // dress
@@ -981,6 +1208,22 @@ function renderRoom() {
         ctx.fillStyle='rgba(200,200,200,0.3)';ctx.fillRect(sx+12,sy+6,4,3); // glasses
         ctx.fillRect(sx+18,sy+6,4,3);
         ctx.fillStyle='rgba(200,200,200,0.3)';ctx.fillRect(sx+16,sy+7,2,1); // bridge
+      }else if(label==='Kerwin'){
+        // Kerwin: montañista (chaqueta naranja, mochila, gorro de lana)
+        ctx.fillStyle='#5a3a1a';ctx.fillRect(sx+6,sy+16,5,12); // mochila (correa atrás izq)
+        ctx.fillStyle='#c85a20';ctx.fillRect(sx+10,sy+14,20,16); // chaqueta naranja
+        ctx.fillStyle='#e87a30';ctx.fillRect(sx+10,sy+14,20,3); // cuello chaqueta
+        ctx.fillStyle='#a84a18';ctx.fillRect(sx+18,sy+14,4,16); // cremallera
+        ctx.fillStyle='#3a3a4a';ctx.fillRect(sx+12,sy+28,16,6); // pantalón
+        ctx.fillStyle='#8a7a4a';ctx.fillRect(sx+12,sy+4,16,12); // head
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+6,14,7); // face
+        ctx.fillStyle='#2a4a8a';ctx.fillRect(sx+11,sy+2,18,5); // gorro de lana
+        ctx.fillStyle='#3a6aaa';ctx.fillRect(sx+11,sy+5,18,2); // borde gorro
+        ctx.fillStyle='#fff';ctx.fillRect(sx+19,sy+0,3,3); // pompón
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+8,3,3);ctx.fillRect(sx+22,sy+8,3,3); // ojos
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+9,1,1);ctx.fillRect(sx+23,sy+9,1,1);
+        ctx.fillStyle='#bbb';ctx.fillRect(sx+14,sy+12,12,2); // barba escarchada
+        ctx.fillStyle='#c0303a';ctx.fillRect(sx+12,sy+13,16,3); // bufanda roja
       }else{
         // Orin / generic: blue tunic
         ctx.fillStyle='#3a5a8a';ctx.fillRect(sx+10,sy+14,20,16);
@@ -1007,6 +1250,7 @@ function renderRoom() {
       const room = o.room||'';
       let style='default';
       if(o.label==='../') style='back';
+      else if(room.startsWith('/mountain')) style='mountain';
       else if(room.startsWith('/castle')) style='castle';
       else if(room.startsWith('/village')) style='village';
       else if(room.includes('cave')||room.startsWith('/forest')) style='cave';
@@ -1041,6 +1285,48 @@ function renderRoom() {
         ctx.fillStyle='#8a6a3a';ctx.fillRect(sx+8,sy+8,TILE-16,4);
         ctx.fillStyle='#c89030';ctx.beginPath();ctx.arc(sx+16,sy+20,2,0,Math.PI*2);ctx.fill();
         ctx.fillStyle='#c89030';ctx.beginPath();ctx.arc(sx+24,sy+20,2,0,Math.PI*2);ctx.fill();
+      }else if(style==='mountain'){
+        // Mountain peak with snow cap
+        // cielo de fondo
+        ctx.fillStyle='rgba(120,150,190,0.18)';ctx.fillRect(sx+1,sy+1,TILE-2,TILE-2);
+        // montaña trasera (más clara)
+        ctx.fillStyle='#5a6a7a';
+        ctx.beginPath();
+        ctx.moveTo(sx+4,sy+TILE-4);
+        ctx.lineTo(sx+16,sy+10);
+        ctx.lineTo(sx+28,sy+TILE-4);
+        ctx.closePath();ctx.fill();
+        // montaña principal (delante)
+        ctx.fillStyle='#7a6a5a';
+        ctx.beginPath();
+        ctx.moveTo(sx+8,sy+TILE-4);
+        ctx.lineTo(sx+24,sy+5);
+        ctx.lineTo(sx+TILE-2,sy+TILE-4);
+        ctx.closePath();ctx.fill();
+        // cara sombreada
+        ctx.fillStyle='#5a4a3a';
+        ctx.beginPath();
+        ctx.moveTo(sx+24,sy+5);
+        ctx.lineTo(sx+24,sy+TILE-4);
+        ctx.lineTo(sx+TILE-2,sy+TILE-4);
+        ctx.closePath();ctx.fill();
+        // pico nevado
+        ctx.fillStyle='#f0f4ff';
+        ctx.beginPath();
+        ctx.moveTo(sx+24,sy+5);
+        ctx.lineTo(sx+18,sy+15);
+        ctx.lineTo(sx+22,sy+14);
+        ctx.lineTo(sx+24,sy+18);
+        ctx.lineTo(sx+27,sy+13);
+        ctx.lineTo(sx+31,sy+15);
+        ctx.closePath();ctx.fill();
+        // nieve del pico trasero
+        ctx.fillStyle='#dfe6f0';
+        ctx.beginPath();
+        ctx.moveTo(sx+16,sy+10);
+        ctx.lineTo(sx+12,sy+17);
+        ctx.lineTo(sx+20,sy+17);
+        ctx.closePath();ctx.fill();
       }else if(style==='back'){
         // Return door
         ctx.fillStyle='#4a3a2a';ctx.fillRect(sx+4,sy+4,TILE-8,TILE-8);
@@ -1060,7 +1346,8 @@ function renderRoom() {
       ctx.font='8px monospace';ctx.fillStyle='#64b5f6';
       ctx.fillText(o.label.replace(/\//g,''),sx+20,sy+38);
     } else if (o.type === 'enemy') {
-      const sx=o.x*TILE, sy=o.y*TILE;
+      const sx=o.x*TILE;
+      const sy=o.y*TILE + (o.hp>0 ? Math.round(Math.sin((animTime+o.x*5)/12)*1.5) : 0);
       if(o.hp>0){
         const isBoss = o.label==='Goblin_Chief';
         const bs = isBoss ? 1.6 : 1; // boss scale
@@ -1115,9 +1402,10 @@ function renderRoom() {
   drawHit(hitEffect);if(hitEffect&&hitEffect.life<=0)hitEffect=null;
   drawHit(playerHitEffect);if(playerHitEffect&&playerHitEffect.life<=0)playerHitEffect=null;
 
-  // Draw player
-  const px = player.px*TILE, py = player.py*TILE;
-  ctx.fillStyle='rgba(0,0,0,0.3)';ctx.beginPath();ctx.ellipse(px+20,py+34,12,5,0,0,Math.PI*2);ctx.fill();
+  // Draw player (con bobbing idle)
+  const bob = Math.round(Math.sin(animTime/14)*1.5);
+  const px = player.px*TILE, py = player.py*TILE + bob;
+  ctx.fillStyle='rgba(0,0,0,0.3)';ctx.beginPath();ctx.ellipse(px+20,player.py*TILE+34,12,5,0,0,Math.PI*2);ctx.fill();
   if(player.armor){
     // Armored player (silver/steel)
     ctx.fillStyle='#8a9aaa';ctx.fillRect(px+10,py+14,20,16);
@@ -1130,12 +1418,30 @@ function renderRoom() {
     ctx.fillStyle='#c0392b';ctx.fillRect(px+11,py+1,18,4);
     ctx.fillStyle='#6a7a8a';ctx.fillRect(px+8,py+16,4,12);ctx.fillRect(px+28,py+16,4,12);
   }else{
+    // piernas y botas
+    ctx.fillStyle='#2a2a3a';ctx.fillRect(px+13,py+28,5,7);ctx.fillRect(px+22,py+28,5,7);
+    ctx.fillStyle='#1a1a24';ctx.fillRect(px+13,py+33,5,2);ctx.fillRect(px+22,py+33,5,2);
+    // túnica/cuerpo con sombreado
     ctx.fillStyle='#3a7bd5';ctx.fillRect(px+10,py+14,20,16);
-    ctx.fillStyle='#3a7bd5';ctx.fillRect(px+12,py+4,16,12);
-    ctx.fillStyle='#e8c888';ctx.fillRect(px+13,py+5,14,7);
-    ctx.fillStyle='#fff';ctx.fillRect(px+15,py+7,3,3);ctx.fillRect(px+22,py+7,3,3);
-    ctx.fillStyle='#222';ctx.fillRect(px+16,py+8,1,1);ctx.fillRect(px+23,py+8,1,1);
+    ctx.fillStyle='#2f66b4';ctx.fillRect(px+10,py+14,20,16);
+    ctx.fillStyle='#3a7bd5';ctx.fillRect(px+11,py+14,18,14);
+    ctx.fillStyle='rgba(255,255,255,0.12)';ctx.fillRect(px+11,py+14,18,3);
+    // brazos
+    ctx.fillStyle='#2f66b4';ctx.fillRect(px+7,py+15,4,11);ctx.fillRect(px+29,py+15,4,11);
+    ctx.fillStyle='#e8c888';ctx.fillRect(px+7,py+24,4,3);ctx.fillRect(px+29,py+24,4,3); // manos
+    // cinturón
+    ctx.fillStyle='#5a3a1a';ctx.fillRect(px+10,py+26,20,2);ctx.fillStyle='#c89030';ctx.fillRect(px+18,py+26,4,2);
+    // cabeza
+    ctx.fillStyle='#e8c888';ctx.fillRect(px+13,py+5,14,9);
+    ctx.fillStyle='rgba(0,0,0,0.08)';ctx.fillRect(px+24,py+5,3,9); // sombra mejilla
+    // capucha/pelo
+    ctx.fillStyle='#3a4a6a';ctx.fillRect(px+12,py+3,16,4);ctx.fillRect(px+12,py+5,2,6);ctx.fillRect(px+26,py+5,2,6);
+    // ojos
+    ctx.fillStyle='#fff';ctx.fillRect(px+15,py+8,3,3);ctx.fillRect(px+22,py+8,3,3);
+    ctx.fillStyle='#222';ctx.fillRect(px+16,py+9,1,1);ctx.fillRect(px+23,py+9,1,1);
+    // banda roja
     ctx.fillStyle='#c0392b';ctx.fillRect(px+11,py+1,18,4);
+    ctx.fillStyle='rgba(255,255,255,0.2)';ctx.fillRect(px+11,py+1,18,1);
   }
   // Direction indicator
   ctx.fillStyle='rgba(0,255,100,0.3)';ctx.beginPath();
@@ -1152,6 +1458,41 @@ function renderRoom() {
     grad.addColorStop(1, 'rgba(0,0,0,1)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
+  }
+
+  // Partículas
+  for(const p of particles){
+    ctx.globalAlpha=Math.max(0,p.life/p.maxLife);
+    ctx.fillStyle=p.color;
+    ctx.fillRect(p.x-p.size/2, p.y-p.size/2, p.size, p.size);
+  }
+  ctx.globalAlpha=1;
+
+  // Números/textos flotantes
+  for(const f of floaters){
+    ctx.globalAlpha=Math.min(1, f.life/20);
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.font='bold 14px monospace';ctx.textAlign='center';
+    ctx.fillText(f.text, f.x+1, f.y+1);
+    ctx.fillStyle=f.color;
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha=1;
+
+  // Viñeta ambiental (oscurece bordes para dar profundidad)
+  if(!_vignette){
+    _vignette=ctx.createRadialGradient(W/2,H/2,H*0.35,W/2,H/2,W*0.62);
+    _vignette.addColorStop(0,'rgba(0,0,0,0)');
+    _vignette.addColorStop(0.7,'rgba(0,0,0,0.12)');
+    _vignette.addColorStop(1,'rgba(0,0,0,0.42)');
+  }
+  ctx.fillStyle=_vignette;ctx.fillRect(0,0,W,H);
+
+  ctx.restore();
+
+  // Fade de transición de sala (sobre todo, sin shake)
+  if(fadeAlpha>0){
+    ctx.fillStyle=`rgba(0,0,0,${fadeAlpha})`;
+    ctx.fillRect(0,0,W,H);
   }
 }
 
@@ -1182,7 +1523,8 @@ cmds.ls = {desc:'Lista elementos en la sala actual | ls -la ~/ para inventario',
   // ls -la ~/ or ls ~/ shows inventory
   if(flags.includes('-la')||paths.some(p=>p==='~/'||p==='~')){
     // Show inventory (home directory)
-    if(player.inventory.length===0)return tPrint('📂 ~/: (vacío)','info');
+    const homeKeys=Object.keys(homeFiles);
+    if(player.inventory.length===0&&homeKeys.length===0)return tPrint('📂 ~/: (vacío)','info');
     const ITEM_STYLES = {
       'light_rod.txt':    {icon:'🔦',color:'#b388ff',name:'Vara de Luz',  cat:'Útiles',     desc:'Cristal brillante. Ilumina la oscuridad.'},
       'iron_key.txt':     {icon:'🔑',color:'#ffab40',name:'Llave de Hierro',cat:'Útiles',  desc:'Oxidada pero funcional. Abre algo importante.'},
@@ -1191,6 +1533,7 @@ cmds.ls = {desc:'Lista elementos en la sala actual | ls -la ~/ para inventario',
       'potion.txt':       {icon:'🧪',color:'#ef5350',name:'Poción de Curación',cat:'Útiles',desc:'+40 HP. Usa "./potion" para beberla.'},
       'leather_armor.txt':{icon:'🦺',color:'#8d6e63',name:'Armadura de Cuero',cat:'Equipo',desc:'(+2 DEF) Equípala con "./leather_armor".'},
       'sword.txt':        {icon:'⚔️',color:'#90a4ae',name:'Espada de Acero',cat:'Equipo',  desc:'(+6 ATK) Equípala con "./sword".'},
+      'crown.txt':        {icon:'👑',color:'#ffd700',name:'Corona del Kernel',cat:'Equipo',desc:'(+5 ATK, +5 DEF) Poder del código abierto.'},
       'skill_power.txt':  {icon:'⚡',color:'#ffd740',name:'Power Strike',  cat:'Útiles',   desc:'Doble daño. En combate: "./power_strike".'},
       'skill_heal.txt':   {icon:'💚',color:'#69f0ae',name:'Heal',         cat:'Útiles',   desc:'+30 HP. En combate: "./heal".'},
     };
@@ -1208,6 +1551,11 @@ cmds.ls = {desc:'Lista elementos en la sala actual | ls -la ~/ para inventario',
         const perms=cat==='Equipo'?'-rwx------':cat==='Útiles'?'-rw-r--r--':'-rw-rw-r--';
         tPrint(`${perms}  ${style.name.padEnd(18)} ${style.desc||''}`,'out');
       }
+    }
+    // Archivos/directorios creados por el jugador
+    for(const k of Object.keys(homeFiles)){
+      if(k.startsWith('DIR:'))tPrint(`drwxr-xr-x  ${k.slice(4).padEnd(18)} (directorio)`,'help');
+      else tPrint(`-rw-r--r--  ${k.padEnd(18)} ${homeFiles[k]?'('+homeFiles[k].split('\n').length+' líneas)':'(vacío)'}`,'out');
     }
     tPrint('','out');
     tPrint(`💰  Oro: ${player.gold}       ⭐ Nv.${player.level}`,'out');
@@ -1240,6 +1588,13 @@ cmds.cat = {desc:'Examina un elemento o habla con un NPC',usage:'cat <nombre>',r
     cmds.profile.run();
     return;
   }
+  // Archivos creados por el jugador (echo > archivo)
+  if(homeFiles[args[0]]!==undefined){
+    const c=homeFiles[args[0]];
+    if(c==='')tPrint('(archivo vacío)','dim');
+    else c.split('\n').forEach(l=>tPrint(l,'out'));
+    return;
+  }
   const target = findTarget(args[0]);
   if(!target)return tPrint(`cat: ${args[0]}: No such file or directory`,'err');
   // For NPCs/items, walk adjacent instead of on top
@@ -1254,6 +1609,11 @@ cmds.cat = {desc:'Examina un elemento o habla con un NPC',usage:'cat <nombre>',r
   if(target.type==='npc'){
     tPrint(`👤 ${target.label}`,'dlg');
     tPrint(`━━━━━━━━━━━━━━━━━━`,'dim');
+    // Si el reto del NPC ya está completo, solo agradece (no repite instrucciones)
+    if(target.challengeId && challengesDone[target.challengeId]){
+      for(const line of (target.dialogDone||['¡Gracias por tu ayuda!']))tPrint(`  ${line}`,'dlg');
+      return;
+    }
     const lines=bossDefeated&&target.dialogAfter?target.dialogAfter:target.dialog;
     for(const line of lines||[])tPrint(`  ${line}`,'dlg');
     if(target.onTalk){
@@ -1294,6 +1654,9 @@ cmds.cd = {desc:'Cambia de sala (como cd en Linux)',usage:'cd <ruta>',run:(args)
   if(!room)return tPrint('cd: error interno','err');
   const door=room.overlays.find(o=>o.type==='door'&&o.label.replace(/\/$/,'').toLowerCase()===target);
   if(!door)return tPrint(`cd: ${args[0]}: No such directory`,'err');
+  // Puzzle: la cima requiere ejecutar ascend.sh primero
+  if(door.room==='/mountain/summit'&&!summitUnlocked)
+    return tPrint('🔒 cd: summit/: Permiso denegado. Ejecuta "chmod +x ascend.sh" y luego "./ascend.sh".','err');
   if ((door.x !== player.px || door.y !== player.py) && !isMoving)
     return moveToTarget(door.x, door.y, () => cmds.cd.run(args));
   goToRoom(door.room, door);
@@ -1332,6 +1695,7 @@ function showQuizQuestion(){
     // All answered
     if(qs.correct===3){
       player.inventory.push('iron_key.txt');
+      AUDIO.play('levelup');
       tPrint('🎉  ¡Respondiste todo correctamente! El Sabio te entrega una llave misteriosa.','out');
       tPrint('🔑  "Úsala con sabiduría. Abre lo que está cerrado."','dlg');
     }else{
@@ -1360,9 +1724,11 @@ function handleQuizAnswer(val){
   }
   const q=qs.questions[qs.current];
   if(num-1===q.a){
+    AUDIO.play('correct');
     tPrint('✅  ¡Correcto!','success');
     qs.correct++;
   }else{
+    AUDIO.play('wrong');
     tPrint(`❌  Incorrecto. La respuesta era: ${q.o[q.a]}`,'err');
     tPrint(`🍃  ${MOTIVATIONAL[Math.floor(Math.random()*MOTIVATIONAL.length)]}`,'lore');
   }
@@ -1371,6 +1737,7 @@ function handleQuizAnswer(val){
 }
 
 function victoryBoss(){
+  AUDIO.play('victory');
   tPrint('','out');
   tPrint('═══════════════════════════════════════','title');
   tPrint('  👑 ¡HAS VENCIDO AL JEFE GOBBLIN!','title');
@@ -1429,10 +1796,13 @@ function goToRoom(roomId, fromDoor){
     if(spawn){player.px=spawn.x;player.py=spawn.y;}
     else{player.px=10;player.py=5;}
   }
+  fadeAlpha=1; // arranca transición fade-in
   renderRoom();
   updateHud();
   updatePrompt();
   clearHint();
+  AUDIO.play('door');
+  AUDIO.playTrack(AUDIO.trackForRoom(roomId, room.dark));
   tPrint(`📂 ${roomId}`,'info');
   cmds.ls.run([]);
 }
@@ -1485,6 +1855,7 @@ cmds.cp = {desc:'Copia un item a tu inventario (Linux cp)',usage:'cp <item> [~/]
   }
   updateHud();
   if(success){
+    AUDIO.play(target.label==='gold.txt'||target.label==='treasure.txt'?'coin':'pickup');
     const idx=rooms[player.room].overlays.indexOf(target);
     if(idx>-1)rooms[player.room].overlays.splice(idx,1);
   }
@@ -1535,6 +1906,7 @@ cmds.kill = {desc:'Ataca a un enemigo por PID (o inicia combate)',usage:'kill <P
     return moveToTargetAdjacent(targetEnemy.x, targetEnemy.y, () => cmds.kill.run(args));
   gameState='battle';
   battleEnemy=targetEnemy;
+  AUDIO.playTrack(targetEnemy.label==='Goblin_Chief'?'boss':'battle');
   diaryAdd('ps', 'Muestra los enemigos en la sala como procesos con PID.');
   diaryAdd('kill <PID>', 'Ataca a un enemigo por su PID. Ej: kill 1001.');
   tPrint(`⚔️  ¡${targetEnemy.label} aparece!`,'combat');
@@ -1556,6 +1928,7 @@ cmds.disown = {desc:'Huye del combate (Linux disown)',run:()=>{
   if(gameState!=='battle'||!battleEnemy)return tPrint('disown: No hay proceso en combate.','err');
   if(battleEnemy){battleEnemy.hp=battleEnemy.maxHp;battleEnemy=null;}
   gameState='idle';
+  AUDIO.playTrack(AUDIO.trackForRoom(player.room, rooms[player.room]?.dark));
   tPrint('💨  disown: proceso desvinculado. Has huido del combate.','warn');
   cmdEl.focus();
 }};
@@ -1563,7 +1936,237 @@ cmds.disown = {desc:'Huye del combate (Linux disown)',run:()=>{
 // Inventory shown via "ls -la ~/" (handled inside cmds.ls)
 
 cmds.clear = {desc:'Limpia la terminal',run:()=>{termEl.innerHTML='';hintEl=null;}};
-cmds.echo = {desc:'Repite el texto',run:(args)=>tPrint(args.join(' '),'out')};
+// ─── COMANDOS LINUX EXTRA (educativos + utilidades) ───
+// Archivos del "home" del jugador (notas que puede crear)
+const homeFiles = {}; // {nombre: contenido}
+
+cmds.echo = {desc:'Repite texto. Redirige con > o >> a un archivo',usage:'echo "texto" [> archivo]',run:(args)=>{
+  // Detectar redirección > o >>
+  const gi=args.indexOf('>'), gg=args.indexOf('>>');
+  if(gg>-1){
+    const text=args.slice(0,gg).join(' ').replace(/^"|"$/g,'').replace(/\\n/g,'\n');
+    const file=args[gg+1];
+    if(!file)return tPrint('bash: error de sintaxis cerca de «>>»','err');
+    homeFiles[file]=(homeFiles[file]?homeFiles[file]+'\n':'')+text;
+    diaryAdd('echo "texto" >> archivo','Añade texto al final de un archivo (sin borrar lo anterior).');
+    return;
+  }
+  if(gi>-1){
+    const text=args.slice(0,gi).join(' ').replace(/^"|"$/g,'').replace(/\\n/g,'\n');
+    const file=args[gi+1];
+    if(!file)return tPrint('bash: error de sintaxis cerca de «>»','err');
+    homeFiles[file]=text;
+    diaryAdd('echo "texto" > archivo','Escribe texto en un archivo (sobrescribe el contenido).');
+    return;
+  }
+  tPrint(args.join(' ').replace(/^"|"$/g,'').replace(/\\n/g,'\n'),'out');
+}};
+
+cmds.grep = {desc:'Busca un texto en un archivo. Uso: grep <texto> <archivo>',usage:'grep <patrón> <archivo>',run:(args)=>{
+  if(args.length<2)return tPrint('grep: uso: grep <patrón> <archivo>','err');
+  const pat=args[0];
+  const file=args[1];
+  // Buscar en archivos del home
+  if(homeFiles[file]!==undefined){
+    const lines=homeFiles[file].split('\n').filter(l=>l.toLowerCase().includes(pat.toLowerCase()));
+    if(!lines.length)return tPrint('(sin coincidencias)','dim');
+    lines.forEach(l=>tPrint(l.replace(new RegExp(`(${pat})`,'gi'),'⟦$1⟧'),'out'));
+    diaryAdd('grep <patrón> <archivo>','Busca líneas que contengan un texto dentro de un archivo.');
+    if(file==='lista.txt'&&pat.toLowerCase()==='dragon'){
+      grepFoundDragon=true;
+      // Reto de Greta: completar automáticamente si está en la villa y aún no se cobró
+      if(!challengesDone['greta'] && rooms[player.room]?.overlays.some(o=>o.label==='Greta')){
+        challengesDone['greta']=true;player.gold+=20;updateHud();AUDIO.play('coin');
+        tPrint('','out');
+        tPrint('📚 Greta: "¡Ahí está, "dragon"! La encontraste con grep.','dlg');
+        tPrint('📚 Greta: "Toma 20 de oro por tu ayuda, archivista." (+20 oro)','success');
+      }
+    }
+    return;
+  }
+  // Buscar en descripciones de items de la sala (lore)
+  const t=findTarget(file);
+  if(t&&t.desc){
+    const lines=t.desc.split('\n').filter(l=>l.toLowerCase().includes(pat.toLowerCase()));
+    if(!lines.length)return tPrint('(sin coincidencias)','dim');
+    lines.forEach(l=>tPrint(l,'lore'));
+    diaryAdd('grep <patrón> <archivo>','Busca líneas que contengan un texto dentro de un archivo.');
+    return;
+  }
+  tPrint(`grep: ${file}: No such file or directory`,'err');
+}};
+
+cmds.find = {desc:'Busca elementos en la sala. Uso: find [-name <patrón>]',usage:'find [-name <patrón>]',run:(args)=>{
+  const room=rooms[player.room];
+  if(!room)return;
+  let pat=null;
+  const ni=args.indexOf('-name');
+  if(ni>-1&&args[ni+1])pat=args[ni+1].replace(/\*/g,'').toLowerCase();
+  const found=room.overlays.filter(o=>{
+    if(!o.label)return false;
+    if(o.type==='player')return false;
+    if(o.hp!==undefined&&o.hp<=0)return false;
+    if(pat)return o.label.toLowerCase().includes(pat);
+    return true;
+  });
+  if(!found.length)return tPrint('find: (sin resultados)','dim');
+  diaryAdd('find -name <patrón>','Lista elementos cuyo nombre coincide con un patrón.');
+  for(const o of found){
+    const kind=o.type==='enemy'?'⚔️':o.type==='npc'?'👤':o.type==='door'?'🚪':'📄';
+    tPrint(`./${o.label}    ${kind} (${o.x},${o.y})`,'out');
+  }
+}};
+
+cmds.mkdir = {desc:'Crea un directorio en tu home (simbólico). Uso: mkdir <nombre>',usage:'mkdir <nombre>',run:(args)=>{
+  if(!args[0])return tPrint('mkdir: falta operando','err');
+  const name=args[0].replace(/\/$/,'');
+  if(homeFiles['DIR:'+name]!==undefined)return tPrint(`mkdir: no se puede crear «${name}»: El archivo ya existe`,'err');
+  homeFiles['DIR:'+name]='';
+  diaryAdd('mkdir <nombre>','Crea un nuevo directorio.');
+  tPrint(`📁 Directorio creado: ${name}/`,'out');
+}};
+
+cmds.touch = {desc:'Crea un archivo vacío en tu home. Uso: touch <nombre>',usage:'touch <nombre>',run:(args)=>{
+  if(!args[0])return tPrint('touch: falta operando','err');
+  if(homeFiles[args[0]]===undefined)homeFiles[args[0]]='';
+  diaryAdd('touch <archivo>','Crea un archivo vacío (o actualiza su fecha).');
+  tPrint(`📄 Archivo creado: ${args[0]}`,'out');
+}};
+
+cmds.rm = {desc:'Elimina un archivo de tu home. Uso: rm <archivo>',usage:'rm <archivo>',run:(args)=>{
+  if(!args[0])return tPrint('rm: falta operando','err');
+  const name=args[0];
+  if(homeFiles[name]!==undefined){delete homeFiles[name];diaryAdd('rm <archivo>','Elimina un archivo. ¡Cuidado, no hay papelera!');return tPrint(`🗑️  Eliminado: ${name}`,'out');}
+  if(homeFiles['DIR:'+name.replace(/\/$/,'')]!==undefined){delete homeFiles['DIR:'+name.replace(/\/$/,'')];return tPrint(`🗑️  Directorio eliminado: ${name}`,'out');}
+  tPrint(`rm: no se puede borrar «${name}»: No existe el archivo`,'err');
+}};
+
+cmds.mv = {desc:'Renombra/mueve un archivo de tu home. Uso: mv <origen> <destino>',usage:'mv <origen> <destino>',run:(args)=>{
+  if(args.length<2)return tPrint('mv: uso: mv <origen> <destino>','err');
+  const [a,b]=args;
+  if(homeFiles[a]===undefined)return tPrint(`mv: no se puede mover «${a}»: No existe`,'err');
+  homeFiles[b]=homeFiles[a];delete homeFiles[a];
+  diaryAdd('mv <origen> <destino>','Renombra o mueve un archivo.');
+  tPrint(`✅ ${a} → ${b}`,'out');
+  // Reto de Otto: respaldo organizado
+  if(!challengesDone['otto'] && homeFiles['DIR:backups']!==undefined && homeFiles['backups/config.txt']!==undefined
+     && rooms[player.room]?.overlays.some(o=>o.label==='Otto')){
+    challengesDone['otto']=true;player.gold+=20;updateHud();AUDIO.play('coin');
+    tPrint('','out');
+    tPrint('🗂️ Otto: "¡Perfectamente organizado en backups/! Toma 20 de oro." (+20 oro)','success');
+  }
+}};
+
+cmds.chmod = {desc:'Cambia permisos de un archivo. Uso: chmod +x <archivo>',usage:'chmod +x <archivo>',run:(args)=>{
+  if(args.length<2)return tPrint('chmod: uso: chmod +x <archivo>','err');
+  diaryAdd('chmod +x <archivo>','Da permiso de ejecución a un archivo para poder lanzarlo con ./');
+  const file=args[1];
+  if(args[0].includes('x')){
+    scriptExecutable[file]=true;
+    const t=findTarget(file);
+    AUDIO.play('correct');
+    if(t)tPrint(`🔓 chmod +x ${file}: ahora es ejecutable. Lánzalo con "./${file}".`,'success');
+    else tPrint(`🔓 chmod +x ${file}: permiso de ejecución concedido.`,'out');
+  }else{
+    tPrint(`🔧 Permisos de ${file} actualizados (${args[0]}).`,'out');
+  }
+}};
+
+cmds.history = {desc:'Muestra el historial de comandos',run:()=>{
+  if(!history.length)return tPrint('(historial vacío)','dim');
+  history.slice(-20).forEach((h,i)=>tPrint(`  ${String(i+1).padStart(3)}  ${h}`,'out'));
+}};
+
+cmds.top = {desc:'Muestra procesos (enemigos) por carga',run:()=>{
+  const room=rooms[player.room];
+  const enemies=room?room.overlays.filter(o=>o.type==='enemy'&&o.hp>0):[];
+  tPrint(`top - jugador: guest   Nivel ${player.level}   HP ${player.hp}/${player.maxHp}`,'help');
+  tPrint('  PID   ENEMIGO          %HP    ATK','dim');
+  if(!enemies.length){tPrint('  (sin procesos enemigos en esta sala)','dim');return;}
+  for(const e of enemies)
+    tPrint(`  ${String(e._uid).padEnd(5)} ${e.label.padEnd(16)} ${String(Math.round(e.hp/e.maxHp*100)).padStart(3)}%   ${e.atk}`,'out');
+}};
+
+cmds.df = {desc:'Muestra tu "espacio" (inventario y oro)',run:()=>{
+  tPrint('Sistema       Usado   Total','help');
+  tPrint(`~/inventario  ${String(player.inventory.length).padStart(5)}   ∞`,'out');
+  tPrint(`oro           ${String(player.gold).padStart(5)}   ∞`,'out');
+  tPrint(`nivel         ${String(player.level).padStart(5)}   ∞`,'out');
+}};
+
+cmds.uname = {desc:'Muestra información del "sistema"',run:(args)=>{
+  if(args[0]==='-r')return tPrint('6.8.0-aetheria','out');
+  tPrint('Aetheria GNU/Linux  6.8.0-aetheria  x86_64','out');
+}};
+
+cmds.sudo = {desc:'Ejecuta un comando como superusuario',usage:'sudo <comando>',run:(args)=>{
+  if(!args.length)return tPrint('sudo: falta un comando','err');
+  diaryAdd('sudo <comando>','Ejecuta un comando con privilegios de administrador (root).');
+  if(args[0]==='rm'&&(args.includes('-rf')||args.includes('-r'))&&args.includes('/')){
+    tPrint('☠️  sudo rm -rf /: ...nice try. Aetheria se protege a sí misma.','warn');
+    return;
+  }
+  tPrint('🔑 [sudo] contraseña para guest: ********','dim');
+  tPrint(`⚡ Ejecutando como root: ${args.join(' ')}`,'success');
+  const sub=cmds[args[0]];
+  if(sub)sub.run(args.slice(1));
+  else tPrint(`sudo: ${args[0]}: comando no encontrado`,'err');
+}};
+
+cmds.ping = {desc:'Comprueba conectividad con un host',usage:'ping <host>',run:(args)=>{
+  const host=args[0]||'localhost';
+  diaryAdd('ping <host>','Envía paquetes para comprobar si un host responde.');
+  pingedHosts[host]=true;
+  let n=0;
+  const iv=setInterval(()=>{
+    tPrint(`64 bytes from ${host}: icmp_seq=${n+1} ttl=64 time=${(Math.random()*20+5).toFixed(1)} ms`,'out');
+    if(++n>=3){
+      clearInterval(iv);tPrint(`--- ${host} ping statistics --- 3 paquetes, 0% pérdida`,'dim');
+      // Reto de Nettie: diagnosticar kernel.local
+      if(host==='kernel.local' && !challengesDone['nettie'] && rooms[player.room]?.overlays.some(o=>o.label==='Nettie')){
+        challengesDone['nettie']=true;player.gold+=20;updateHud();AUDIO.play('coin');
+        tPrint('','out');
+        tPrint('📡 Nettie: "¡Responde! Me salvaste el turno. Toma 20 de oro." (+20 oro)','success');
+      }
+    }
+  },250);
+}};
+
+cmds.wget = {desc:'Descarga un archivo (simbólico)',usage:'wget <url>',run:(args)=>{
+  if(!args[0])return tPrint('wget: falta la URL','err');
+  diaryAdd('wget <url>','Descarga archivos desde una URL.');
+  tPrint(`--2026-- ${args[0]}`,'dim');
+  tPrint('Resolviendo host... conectado.','dim');
+  tPrint('HTTP 200 OK. Guardando...','out');
+  AUDIO.play('pickup');
+  tPrint("✅ 'descarga' completada (100%).",'success');
+}};
+
+cmds.tar = {desc:'Empaqueta/extrae archivos. Uso: tar -xzf <archivo>',usage:'tar -xzf <archivo>',run:(args)=>{
+  diaryAdd('tar -xzf <archivo>','Extrae un archivo comprimido .tar.gz.');
+  if(args.join(' ').includes('-x'))tPrint(`📦 Extrayendo ${args[args.length-1]||'archivo'}... hecho.`,'out');
+  else if(args.join(' ').includes('-c'))tPrint(`📦 Comprimiendo en ${args[args.length-1]||'archivo'}... hecho.`,'out');
+  else tPrint('tar: uso: tar -xzf <archivo> (extraer) o -czf (comprimir)','warn');
+}};
+
+cmds.cal = {desc:'Muestra un calendario simbólico',run:()=>{
+  tPrint('     Aetheria 2026','help');
+  tPrint('Lu Ma Mi Ju Vi Sa Do','dim');
+  tPrint(' 1  2  3  4  5  6  7','out');
+  tPrint(' 8  9 10 11 12 13 14','out');
+}};
+cmds.music = {desc:'Activa/desactiva la música. Uso: music on|off',usage:'music on|off',run:(args)=>{
+  const a=(args[0]||'').toLowerCase();
+  if(a==='off'){AUDIO.setMusic(false);tPrint('🔇 Música desactivada.','info');}
+  else if(a==='on'){AUDIO.start();AUDIO.setMusic(true);AUDIO.playTrack(AUDIO.trackForRoom(player.room, rooms[player.room]?.dark));tPrint('🎵 Música activada.','info');}
+  else tPrint(`🎵 Música: ${AUDIO.musicEnabled?'ON':'OFF'}. Usa "music on" o "music off".`,'info');
+}};
+cmds.sound = {desc:'Activa/desactiva los efectos de sonido. Uso: sound on|off',usage:'sound on|off',run:(args)=>{
+  const a=(args[0]||'').toLowerCase();
+  if(a==='off'){AUDIO.setSfx(false);tPrint('🔇 Efectos desactivados.','info');}
+  else if(a==='on'){AUDIO.start();AUDIO.setSfx(true);AUDIO.play('select');tPrint('🔊 Efectos activados.','info');}
+  else tPrint(`🔊 Efectos: ${AUDIO.sfxEnabled?'ON':'OFF'}. Usa "sound on" o "sound off".`,'info');
+}};
 cmds.diary = {desc:'Muestra tu diario de comandos aprendidos',run:()=>{
   if(!diary.length)return tPrint('📓  No has aprendido ningún comando aún.','info');
   tPrint('═════  📓 DIARIO DE COMANDOS  ═════','title');
@@ -1638,9 +2241,13 @@ function battleTurn() {
   // Player attacks
   const dmg=Math.max(1,player.atk-e.def+Math.floor(Math.random()*4));
   e.hp=Math.max(0,e.hp-dmg);
+  AUDIO.play('attack');
   tPrint(`⚔️  Atacas por ${dmg} daño.  ${e.label}: ${e.hp}/${e.maxHp} HP`,'combat');
-  // Hit effect animation
+  // Hit effect animation + FX
   hitEffect={x:e.x,y:e.y,life:6,color:'rgba(255,255,200,0.5)',border:'#ff0'};
+  addFloater(e.x, e.y, `-${dmg}`, '#ffe082');
+  spawnParticles(e.x, e.y, '#ffd54f', 8);
+  screenShake(3, 4);
   if(e.hp<=0){
     player.xp+=e.xp||10;
     const eid=e._uid;
@@ -1649,6 +2256,7 @@ function battleTurn() {
     if(e.label==='Goblin_Chief'){
       victoryBoss();
     }else{
+      AUDIO.play('victory');
       const eid=e._uid;
       const reward=already?`🏆  ¡${e.label} derrotado! +${e.xp||10} XP (sin oro, ya derrotado antes)`:`🏆  ¡${e.label} derrotado! +${e.xp||10} XP +${e.gold||5} Oro`;
       tPrint(reward,'success');
@@ -1658,6 +2266,7 @@ function battleTurn() {
     renderRoom();
     gameState='idle';battleEnemy=null;
     updateHud();
+    AUDIO.playTrack(AUDIO.trackForRoom(player.room, rooms[player.room]?.dark));
     return;
   }
   // Enemy attacks (boss has Mighty Blow every 3 turns)
@@ -1665,13 +2274,18 @@ function battleTurn() {
   const isMighty=isBoss&&e.turnCount%3===0;
   const edmg=Math.max(1,(isMighty?e.atk*2:e.atk)-player.def+Math.floor(Math.random()*3));
   player.hp=Math.max(0,player.hp-edmg);
+  AUDIO.play('hurt');
   if(isMighty)tPrint(`💥💥  ¡${e.label} usa MIGHTY BLOW! ${edmg} daño.  Tu HP: ${player.hp}/${player.maxHp}`,'combat');
   else tPrint(`💥  ${e.label} te ataca por ${edmg} daño.  Tu HP: ${player.hp}/${player.maxHp}`,'combat');
-  // Player hit effect
+  // Player hit effect + FX
   playerHitEffect={x:player.px,y:player.py,life:5,color:'rgba(255,100,100,0.4)',border:'#f44'};
+  addFloater(player.px, player.py, `-${edmg}`, '#ff6b6b');
+  spawnParticles(player.px, player.py, '#f44', isMighty?16:8);
+  screenShake(isMighty?9:5, isMighty?12:7);
   renderRoom();
   updateHud();
   if(player.hp<=0){
+    AUDIO.play('error');
     tPrint('💀  Has muerto...','err');
     tPrint('  Pero el destino te da otra oportunidad.','warn');
     player.hp=Math.floor(player.maxHp/2);
@@ -1684,6 +2298,7 @@ function battleTurn() {
     gameState='idle';battleEnemy=null;
     updateHud();
     renderRoom();
+    AUDIO.playTrack(AUDIO.trackForRoom(player.room, rooms[player.room]?.dark));
       tPrint('💡  El enemigo se ha recuperado. Usa "kill <PID>" para intentar de nuevo.','info');
     return;
   }
@@ -1700,6 +2315,9 @@ function checkLevelUp() {
     player.xpNext=Math.floor(player.xpNext*1.5);
     player.maxHp+=15;player.hp+=15;
     player.atk+=2;player.def+=1;
+    AUDIO.play('levelup');
+    addFloater(player.px, player.py, `¡NIVEL ${player.level}!`, '#ffd54f');
+    spawnParticles(player.px, player.py, '#ffd54f', 24, 3.5);
     tPrint(`⭐  ¡SUBISTE AL NIVEL ${player.level}!`,'title');
   }
 }
@@ -1751,6 +2369,7 @@ cmdEl.addEventListener('keydown',e=>{
           if(skill.uses<=0)return tPrint(`bash: ./${exe}: no te quedan usos para esta batalla`,'err');
           skill.uses--;
           if(skill.name==='Power Strike'){
+            AUDIO.play('attack');
             const dmg=Math.max(1,player.atk*2-battleEnemy.def+Math.floor(Math.random()*4));
             battleEnemy.hp=Math.max(0,battleEnemy.hp-dmg);
             tPrint(`⚡ Power Strike! ${dmg} daño! ${battleEnemy.label}: ${battleEnemy.hp}/${battleEnemy.maxHp}`,'combat');
@@ -1759,20 +2378,24 @@ cmdEl.addEventListener('keydown',e=>{
               const eid2=battleEnemy._uid;
               const already2=rewardedEnemies.has(eid2);
               if(!already2){player.gold+=battleEnemy.gold||5;rewardedEnemies.add(eid2);}
-              if(battleEnemy.label==='Goblin_Chief')victoryBoss();else tPrint(`🏆 ${battleEnemy.label} derrotado!`,'success');
+              if(battleEnemy.label==='Goblin_Chief')victoryBoss();else{AUDIO.play('victory');tPrint(`🏆 ${battleEnemy.label} derrotado!`,'success');}
               player.kills++;checkLevelUp();renderRoom();gameState='idle';battleEnemy=null;updateHud();
+              AUDIO.playTrack(AUDIO.trackForRoom(player.room, rooms[player.room]?.dark));
             }else{
               const edmg=Math.max(1,battleEnemy.atk-player.def+Math.floor(Math.random()*3));
-              player.hp=Math.max(0,player.hp-edmg);tPrint(`💥 ${battleEnemy.label} te ataca por ${edmg} daño.`,'combat');updateHud();
+              player.hp=Math.max(0,player.hp-edmg);AUDIO.play('hurt');tPrint(`💥 ${battleEnemy.label} te ataca por ${edmg} daño.`,'combat');updateHud();
               if(player.hp<=0){
+                AUDIO.play('error');
                 player.hp=Math.floor(player.maxHp/2);player.gold=Math.floor(player.gold/2);
                 if(battleEnemy)battleEnemy.hp=battleEnemy.maxHp;
                 const sp=rooms[player.room]?.overlays.find(o=>o.type==='player');if(sp){player.px=sp.x;player.py=sp.y;}
                 gameState='idle';battleEnemy=null;updateHud();renderRoom();
+                AUDIO.playTrack(AUDIO.trackForRoom(player.room, rooms[player.room]?.dark));
                 tPrint('💡 Usa "kill <PID>" para intentar de nuevo.','info');
               }else{renderRoom();tPrint('Presiona ESPACIO o escribe "disown".','info');}
             }
           }else if(skill.name==='Heal'){
+            AUDIO.play('pickup');
             const healed=Math.min(30,player.maxHp-player.hp);player.hp+=healed;
             tPrint(`💚 Heal! +${healed} HP (${player.hp}/${player.maxHp})`,'combat');updateHud();renderRoom();
             tPrint('Presiona ESPACIO o escribe "disown".','info');
@@ -1819,6 +2442,28 @@ cmdEl.addEventListener('keydown',e=>{
     histIdx=history.length;
     tPrint(`guest@aetheria:${player.room}$ ${val}`,'cmd');
 
+    // ── Soporte de pipe: cat <archivo> | grep <texto> ──
+    if(val.includes('|')){
+      const [left,right]=val.split('|').map(s=>s.trim());
+      const lp=left.match(/(?:[^\s"]+|"[^"]*")+/g)||[];
+      const rp=right.match(/(?:[^\s"]+|"[^"]*")+/g)||[];
+      if(lp[0]==='cat'&&rp[0]==='grep'&&rp[1]){
+        const file=lp[1];
+        const pat=rp[1].replace(/^"|"$/g,'');
+        let content=null;
+        if(homeFiles[file]!==undefined)content=homeFiles[file];
+        else{const t=findTarget(file);if(t&&t.desc)content=t.desc;}
+        if(content===null){tPrint(`cat: ${file}: No such file or directory`,'err');updatePrompt();return;}
+        const lines=content.split('\n').filter(l=>l.toLowerCase().includes(pat.toLowerCase()));
+        if(!lines.length)tPrint('(sin coincidencias)','dim');
+        else lines.forEach(l=>tPrint(l,'out'));
+        diaryAdd('cat archivo | grep texto','Pipe: pasa la salida de un comando como entrada de otro.');
+        updatePrompt();return;
+      }
+      tPrint('bash: pipe soportado solo para "cat <archivo> | grep <texto>"','warn');
+      updatePrompt();return;
+    }
+
     const parts=val.match(/(?:[^\s"]+|"[^"]*")+/g)||[];
     const cmd=parts[0].toLowerCase();
     const args=parts.slice(1).map(a=>a.replace(/^"|"$/g,''));
@@ -1835,6 +2480,7 @@ cmdEl.addEventListener('keydown',e=>{
           if(gameState!=='battle')return tPrint(`bash: ./${exe}: solo puedes usarlo en combate`,'err');
           skill.uses--;
           if(skill.name==='Power Strike'){
+            AUDIO.play('attack');
             const dmg=Math.max(1,player.atk*2-battleEnemy.def+Math.floor(Math.random()*4));
             battleEnemy.hp=Math.max(0,battleEnemy.hp-dmg);
             tPrint(`⚡ Power Strike! ${dmg} de daño!  ${battleEnemy.label}: ${battleEnemy.hp}/${battleEnemy.maxHp}`,'combat');
@@ -1845,22 +2491,27 @@ cmdEl.addEventListener('keydown',e=>{
               if(!already3){player.gold+=battleEnemy.gold||5;rewardedEnemies.add(eid3);}
               if(battleEnemy.label==='Goblin_Chief')victoryBoss();
               else {
+                AUDIO.play('victory');
                 const reward=already3?`+${battleEnemy.xp||10} XP (sin oro, ya derrotado antes)`:`🏆  ¡${battleEnemy.label} derrotado! +${battleEnemy.xp||10} XP +${battleEnemy.gold||5} Oro`;
                 tPrint(reward,'success');
               }
               player.kills++;checkLevelUp();renderRoom();gameState='idle';battleEnemy=null;updateHud();
+              AUDIO.playTrack(AUDIO.trackForRoom(player.room, rooms[player.room]?.dark));
             }else{
               const edmg=Math.max(1,battleEnemy.atk-player.def+Math.floor(Math.random()*3));
               player.hp=Math.max(0,player.hp-edmg);
+              AUDIO.play('hurt');
               tPrint(`💥  ${battleEnemy.label} te ataca por ${edmg} daño.  Tu HP: ${player.hp}/${player.maxHp}`,'combat');
               updateHud();
               if(player.hp<=0){
+                AUDIO.play('error');
                 tPrint('💀  Has muerto...','err');tPrint('  Pero el destino te da otra oportunidad.','warn');
                 player.hp=Math.floor(player.maxHp/2);player.gold=Math.floor(player.gold/2);
                 if(battleEnemy)battleEnemy.hp=battleEnemy.maxHp;
                 const spawn=rooms[player.room]?.overlays.find(o=>o.type==='player');
                 if(spawn){player.px=spawn.x;player.py=spawn.y;}
                 gameState='idle';battleEnemy=null;updateHud();renderRoom();
+                AUDIO.playTrack(AUDIO.trackForRoom(player.room, rooms[player.room]?.dark));
                 tPrint('💡  El enemigo se ha recuperado. Usa "kill <PID>" para intentar de nuevo.','info');
               }else{
                 renderRoom();
@@ -1868,6 +2519,7 @@ cmdEl.addEventListener('keydown',e=>{
               }
             }
           }else if(skill.name==='Heal'){
+            AUDIO.play('pickup');
             const healed=Math.min(30,player.maxHp-player.hp);
             player.hp+=healed;
             tPrint(`💚 Heal! +${healed} HP (${player.hp}/${player.maxHp})`,'combat');
@@ -1985,6 +2637,200 @@ cmdEl.addEventListener('keydown',e=>{
   }
 });
 
+// ═══════════════════════════════════════════
+//  AUDIO — chiptune procedural, 100% sintetizado
+//  Sin archivos, sin librerías, sin licencias.
+// ═══════════════════════════════════════════
+const AUDIO = (() => {
+  let ctx = null;
+  let masterGain = null;
+  let musicGain = null;
+  let sfxGain = null;
+  let musicEnabled = true;
+  let sfxEnabled = true;
+  let started = false;
+  let currentTrack = null;
+  let trackTimer = null;
+  let trackStep = 0;
+
+  // Notas (Hz) — escala para melodías
+  const N = {
+    'C3':130.81,'D3':146.83,'E3':164.81,'F3':174.61,'G3':196.00,'A3':220.00,'B3':246.94,
+    'C4':261.63,'D4':293.66,'E4':329.63,'F4':349.23,'G4':392.00,'A4':440.00,'B4':493.88,
+    'C5':523.25,'D5':587.33,'E5':659.25,'F5':698.46,'G5':783.99,'A5':880.00,
+    R:0, // silencio
+  };
+
+  function init() {
+    if (ctx) return;
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = ctx.createGain(); masterGain.gain.value = 0.5; masterGain.connect(ctx.destination);
+      musicGain = ctx.createGain(); musicGain.gain.value = 0.35; musicGain.connect(masterGain);
+      sfxGain = ctx.createGain(); sfxGain.gain.value = 0.55; sfxGain.connect(masterGain);
+    } catch(e) { ctx = null; }
+  }
+
+  // Un tono con envolvente ADSR simple
+  function tone(freq, dur, type='square', dest=sfxGain, vol=0.3) {
+    if (!ctx || !freq) return;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g); g.connect(dest);
+    osc.start(t); osc.stop(t + dur + 0.02);
+  }
+
+  // Ruido (para percusión / efectos ásperos)
+  function noise(dur, vol=0.2, filterFreq=1000) {
+    if (!ctx) return;
+    const bufferSize = ctx.sampleRate * dur;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random()*2 - 1;
+    const src = ctx.createBufferSource(); src.buffer = buffer;
+    const filter = ctx.createBiquadFilter(); filter.type='lowpass'; filter.frequency.value=filterFreq;
+    const g = ctx.createGain();
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(filter); filter.connect(g); g.connect(sfxGain);
+    src.start(t); src.stop(t + dur);
+  }
+
+  // ── Pistas musicales (loops de notas) ──
+  // Cada pista: {tempo (ms/paso), bass[], lead[]}
+  const TRACKS = {
+    overworld: {
+      tempo: 460, lofi: true,
+      lead: ['C4','R','E4','R','G4','R','E4','R','F4','R','A4','R','G4','R','E4','R'],
+      bass: ['C3','C3','G3','G3','F3','F3','G3','G3','C3','C3','A3','A3','G3','G3','C3','C3'],
+    },
+    castle: {
+      tempo: 520, lofi: true,
+      lead: ['E4','R','G4','R','B4','R','G4','R','A4','R','C5','R','G4','R','E4','R'],
+      bass: ['E3','E3','B3','B3','C4','C4','G3','G3','A3','A3','E3','E3','B3','B3','E3','E3'],
+    },
+    forest: {
+      tempo: 500, lofi: true,
+      lead: ['A3','R','C4','R','E4','R','C4','R','D4','R','F4','R','E4','R','C4','R'],
+      bass: ['A3','A3','F3','F3','C3','C3','G3','G3','A3','A3','F3','F3','E3','E3','A3','A3'],
+    },
+    village: {
+      tempo: 480, lofi: true,
+      lead: ['G4','R','A4','R','C5','R','A4','R','F4','R','G4','R','A4','R','G4','R'],
+      bass: ['C3','C3','G3','G3','C3','C3','F3','F3','C3','C3','G3','G3','C3','C3','C3','C3'],
+    },
+    cave: {
+      tempo: 440, lofi: true,
+      lead: ['D4','R','R','F4','R','R','E4','R','D4','R','R','C4','R','R','A3','R'],
+      bass: ['D3','D3','D3','D3','A3','A3','A3','A3','C3','C3','C3','C3','D3','D3','D3','D3'],
+    },
+    battle: {
+      tempo: 160,
+      lead: ['E4','E4','G4','E4','A4','G4','E4','D4','E4','E4','C5','B4','A4','G4','E4','E4'],
+      bass: ['E3','E3','E3','E3','C3','C3','C3','C3','D3','D3','D3','D3','E3','E3','B3','B3'],
+    },
+    boss: {
+      tempo: 150,
+      lead: ['C4','C4','D4','Eb4','C4','Eb4','D4','C4','B3','C4','D4','F4','Eb4','D4','C4','C4'],
+      bass: ['C3','C3','C3','G3','C3','C3','C3','Ab3','C3','C3','C3','F3','G3','G3','C3','C3'],
+    },
+  };
+  // Añadir notas faltantes para boss (bemoles)
+  N['Eb4']=311.13; N['Ab3']=207.65; N['B3']=246.94;
+
+  function playTrack(name) {
+    if (!ctx || !musicEnabled) { currentTrack = name; return; }
+    if (currentTrack === name && trackTimer) return;
+    currentTrack = name;
+    if (trackTimer) { clearInterval(trackTimer); trackTimer = null; }
+    const track = TRACKS[name];
+    if (!track) return;
+    trackStep = 0;
+    const lofi = !!track.lofi;
+    trackTimer = setInterval(() => {
+      if (!musicEnabled) return;
+      const lead = track.lead[trackStep % track.lead.length];
+      const bass = track.bass[trackStep % track.bass.length];
+      if (lofi) {
+        // Exploración: cálido, suave, notas más largas
+        tone(N[lead], track.tempo/1000*1.4, 'triangle', musicGain, 0.18);
+        tone(N[bass], track.tempo/1000*1.4, 'sine', musicGain, 0.26);
+        if (trackStep % 8 === 0) noise(0.04, 0.04, 4000); // percusión muy tenue
+      } else {
+        // Combate: enérgico, chiptune marcado
+        tone(N[lead], track.tempo/1000*0.9, 'square', musicGain, 0.22);
+        tone(N[bass], track.tempo/1000*0.9, 'triangle', musicGain, 0.30);
+        if (trackStep % 4 === 0) noise(0.05, 0.08, 6000);
+      }
+      trackStep++;
+    }, track.tempo);
+  }
+
+  function stopTrack() {
+    if (trackTimer) { clearInterval(trackTimer); trackTimer = null; }
+    currentTrack = null;
+  }
+
+  // ── Efectos de sonido ──
+  const SFX = {
+    attack(){ tone(180,0.08,'square',sfxGain,0.3); noise(0.08,0.15,2000); },
+    hurt(){ tone(120,0.15,'sawtooth',sfxGain,0.3); tone(90,0.2,'sawtooth',sfxGain,0.2); },
+    pickup(){ tone(N.C5,0.08,'square',sfxGain,0.25); tone(N.E5,0.08,'square',sfxGain,0.25); tone(N.G5,0.12,'square',sfxGain,0.25); },
+    error(){ tone(140,0.12,'sawtooth',sfxGain,0.3); tone(100,0.18,'sawtooth',sfxGain,0.25); },
+    levelup(){ [N.C4,N.E4,N.G4,N.C5,N.E5].forEach((f,i)=>setTimeout(()=>tone(f,0.18,'square',sfxGain,0.3),i*70)); },
+    victory(){ [N.C4,N.E4,N.G4,N.C5,N.G4,N.C5].forEach((f,i)=>setTimeout(()=>tone(f,0.22,'square',sfxGain,0.3),i*120)); },
+    door(){ tone(200,0.1,'triangle',sfxGain,0.25); tone(150,0.12,'triangle',sfxGain,0.2); },
+    coin(){ tone(N.B4,0.06,'square',sfxGain,0.25); tone(N.E5,0.1,'square',sfxGain,0.25); },
+    correct(){ tone(N.E4,0.1,'square',sfxGain,0.28); tone(N.A4,0.14,'square',sfxGain,0.28); },
+    wrong(){ tone(N.A3,0.14,'sawtooth',sfxGain,0.28); tone(N.F3,0.2,'sawtooth',sfxGain,0.22); },
+    select(){ tone(N.G4,0.04,'square',sfxGain,0.18); },
+  };
+
+  function play(name) {
+    if (!ctx || !sfxEnabled) return;
+    if (SFX[name]) SFX[name]();
+  }
+
+  // Arranca el contexto en el primer gesto del usuario
+  function start() {
+    if (started) return;
+    init();
+    if (ctx && ctx.state === 'suspended') ctx.resume();
+    started = true;
+    if (currentTrack) playTrack(currentTrack);
+    else playTrack('overworld');
+  }
+
+  function setMusic(on) {
+    musicEnabled = on;
+    if (!on) stopTrack();
+    else if (started && currentTrack) playTrack(currentTrack);
+  }
+  function setSfx(on) { sfxEnabled = on; }
+
+  // Mapea sala → pista
+  function trackForRoom(roomId, isDark) {
+    if (isDark) return 'cave';
+    if (roomId.startsWith('/castle')) return 'castle';
+    if (roomId.startsWith('/village')) return 'village';
+    if (roomId.startsWith('/forest')) return 'forest';
+    return 'overworld';
+  }
+
+  return { start, play, playTrack, stopTrack, setMusic, setSfx,
+           trackForRoom,
+           get musicEnabled(){return musicEnabled;},
+           get sfxEnabled(){return sfxEnabled;},
+           get ready(){return started;} };
+})();
+
 // ─── INIT ───
 function boot() {
   initWorld();
@@ -2009,6 +2855,26 @@ function boot() {
   diaryAdd('disown', 'Huye del combate (desvincula el proceso enemigo).');
   diaryAdd('./<archivo>', 'Ejecuta un archivo. Ej: ./light_rod, ./power_strike, ./heal');
   diaryAdd('ls -la ~/', 'Muestra tu inventario con permisos y detalles.');
+  diaryAdd('grep <patrón> <archivo>', 'Busca líneas que contengan un texto dentro de un archivo.');
+  diaryAdd('find -name <patrón>', 'Lista elementos de la sala cuyo nombre coincide con un patrón.');
+  diaryAdd('mkdir <nombre>', 'Crea un nuevo directorio en tu home.');
+  diaryAdd('touch <archivo>', 'Crea un archivo vacío (o actualiza su fecha).');
+  diaryAdd('rm <archivo>', 'Elimina un archivo. ¡Cuidado, no hay papelera!');
+  diaryAdd('mv <origen> <destino>', 'Renombra o mueve un archivo.');
+  diaryAdd('chmod +x <archivo>', 'Da permiso de ejecución a un archivo para lanzarlo con ./');
+  diaryAdd('echo "texto" > archivo', 'Escribe texto en un archivo (sobrescribe). Con >> añade al final.');
+  diaryAdd('cat archivo | grep texto', 'Pipe: pasa la salida de un comando como entrada de otro.');
+  diaryAdd('history', 'Muestra el historial de comandos que has escrito.');
+  diaryAdd('top', 'Muestra los procesos (enemigos) de la sala por carga.');
+  diaryAdd('df', 'Muestra el uso de "espacio": inventario, oro y nivel.');
+  diaryAdd('uname -r', 'Muestra la versión del kernel del sistema.');
+  diaryAdd('sudo <comando>', 'Ejecuta un comando con privilegios de administrador (root).');
+  diaryAdd('ping <host>', 'Envía paquetes para comprobar si un host responde.');
+  diaryAdd('wget <url>', 'Descarga archivos desde una URL.');
+  diaryAdd('tar -xzf <archivo>', 'Extrae un archivo comprimido .tar.gz (con -czf comprime).');
+  diaryAdd('cal', 'Muestra un calendario.');
+  diaryAdd('music on|off', 'Activa o desactiva la música del juego.');
+  diaryAdd('sound on|off', 'Activa o desactiva los efectos de sonido.');
 
   renderRoom();
   updateHud();
@@ -2020,20 +2886,26 @@ function boot() {
   tPrint('  ╚════════════════════════════════════╝','title');
   tPrint('','out');
   tPrint('Comandos: ls, cd, cat, cp, ps, kill, disown, pwd, whoami, echo, man, clear','help');
-  tPrint('          diary, profile, save, load, ./. Para ayuda: "help" o "man <cmd>"','help');
+  tPrint('          grep, find, mkdir, touch, rm, mv, chmod, history, top, df, uname','help');
+  tPrint('          sudo, ping, wget, tar, cal, diary, profile, save, load, ./','help');
+  tPrint('          Soporta pipe: cat f | grep x   |   🏔️ ¡Explora la Montaña!','help');
   tPrint('','out');
   tPrint('🎮  Flechas: moverte.  📖  "cat diario.txt" o "diary" para tus comandos.','info');
+  tPrint('🎵  Audio chiptune activo. Controla con "music on/off" y "sound on/off".','info');
   tPrint('','out');
   cmds.ls.run([]);
   tPrint('','out');
   tPrint('💡  Habla con los NPCs para aprender nuevos comandos.','info');
   cmdEl.focus();
+  AUDIO.playTrack('overworld'); // queda en espera hasta el primer gesto del usuario
   setInterval(enemyPatrol, 2500);
   setInterval(npcPatrol, 2000);
+  requestAnimationFrame(fxLoop); // bucle de animación continuo (bobbing, partículas, fade)
 }
 
-// Click anywhere to focus
-document.addEventListener('click',()=>cmdEl.focus());
+// Click anywhere to focus + arrancar audio en el primer gesto del usuario
+document.addEventListener('click',()=>{cmdEl.focus();AUDIO.start();});
+document.addEventListener('keydown',()=>{AUDIO.start();},{once:false});
 
 boot();
 </script>
