@@ -1,0 +1,2041 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aetheria — RPG + Linux Terminal</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0e0a;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:'Courier New',monospace}
+#app{width:880px;max-width:98vw;border:2px solid #2a4a2a;border-radius:6px;overflow:hidden}
+#map-wrap{position:relative;background:#1a2a1a;height:360px;overflow:hidden}
+#map{display:block;width:100%;height:100%;image-rendering:pixelated}
+#map-ui{position:absolute;top:0;left:0;right:0;padding:8px 12px;display:flex;justify-content:space-between;pointer-events:none}
+#map-ui .loc{color:#ffd54f;font-size:13px;background:rgba(0,0,0,.7);padding:4px 10px;border-radius:3px}
+#map-ui .hud{color:#fff;font-size:12px;background:rgba(0,0,0,.7);padding:4px 10px;border-radius:3px;display:flex;gap:12px}
+#map-ui .hud .hp{color:#ef5350}
+#map-ui .hud .gold{color:#ffd54f}
+#term{background:#0d120d;padding:8px 10px;height:340px;overflow-y:auto;border-top:1px solid #2a4a2a;font-size:14px;line-height:1.5;scroll-behavior:smooth}
+#term::-webkit-scrollbar{width:5px}
+#term::-webkit-scrollbar-track{background:#0d120d}
+#term::-webkit-scrollbar-thumb{background:#2a4a2a;border-radius:2px}
+.term-line{margin:0;white-space:pre-wrap;word-wrap:break-word}
+.term-line.cmd{color:#a5d6a7}
+.term-line.out{color:#00e676}
+.term-line.err{color:#ef5350}
+.term-line.info{color:#4dd0e1}
+.term-line.warn{color:#ffb74d}
+.term-line.lore{color:#ffd54f}
+.term-line.dlg{color:#ce93d8}
+.term-line.combat{color:#ff6b6b}
+.term-line.help{color:#64b5f6}
+.term-line.title{color:#ffd54f;font-weight:bold}
+.term-line.dim{color:#2a5a2a}
+.term-line.success{color:#ffd54f;font-weight:bold}
+#input-row{display:flex;align-items:center;background:#0d120d;padding:4px 10px 8px;border-top:1px solid #1a2a1a}
+#prompt{color:#a5d6a7;white-space:pre;user-select:none;font-size:14px}
+#cmd{flex:1;background:transparent;border:none;outline:none;color:#00e676;font:inherit;font-size:14px;caret-color:#00e676;padding:0 0 0 6px}
+#cmd::placeholder{color:#1a4a1a}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="map-wrap">
+    <canvas id="map"></canvas>
+    <div id="map-ui">
+      <span class="loc" id="locDisplay">~/</span>
+      <span class="hud"><span>❤️ <span id="hpVal">100</span>/<span id="maxHpVal">100</span></span><span>⚔️ <span id="atkVal">12</span></span><span>🛡️ <span id="defVal">5</span></span><span>⭐ Nv <span id="lvlVal">1</span></span><span>💰 <span id="goldVal">0</span></span></span>
+    </div>
+  </div>
+  <div id="term"></div>
+  <div id="input-row">
+    <span id="prompt">guest@aetheria:~$ </span>
+    <input type="text" id="cmd" autofocus spellcheck="false" autocomplete="off" placeholder="help">
+  </div>
+</div>
+<script>
+// ═══════════════════════════════════════════
+//  AETHERIA — RPG híbrido: visual + terminal
+//  Todos los comandos son Linux reales
+// ═══════════════════════════════════════════
+
+const canvas = document.getElementById('map');
+const ctx = canvas.getContext('2d');
+const W = 880, H = 360;
+canvas.width = W; canvas.height = H;
+const TILE = 40;
+const COLS = Math.floor(W / TILE); // 22
+const ROWS = Math.floor(H / TILE); // 9
+
+// ─── TILE TYPES & COLORS ───
+const T = {
+  FLOOR:0, GRASS:1, WALL:2, TREE:3, WATER:4,
+  PATH:5, DOOR:6, CHEST:7, BRIDGE:8, HOUSEWALL:9,
+  THRONE:10, RUG:11, TABLE:12, TORCH:13,
+};
+
+const tileDraw = {};
+tileDraw[T.FLOOR] = (x,y) => {
+  ctx.fillStyle=(x+y)%2?'#4a4a4a':'#525252';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+};
+tileDraw[T.GRASS] = (x,y) => {
+  ctx.fillStyle=['#3a7a1e','#3e7e22','#36801a'][(x*7+y*13)%3];ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+  if((x+y)%4===0){ctx.fillStyle='#2d6a14';ctx.fillRect(x*TILE+6,y*TILE+18,6,3);}
+};
+tileDraw[T.WALL] = (x,y) => {
+  ctx.fillStyle='#5a5a5a';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+  ctx.fillStyle='#4a4a4a';ctx.fillRect(x*TILE+1,y*TILE+1,TILE-2,TILE-2);
+  ctx.fillStyle='#6a6a6a';ctx.fillRect(x*TILE+6,y*TILE+6,28,4);ctx.fillRect(x*TILE+6,y*TILE+18,28,4);ctx.fillRect(x*TILE+6,y*TILE+30,28,4);
+};
+tileDraw[T.TREE] = (x,y) => {
+  ctx.fillStyle='#3a2a1a';ctx.fillRect(x*TILE+14,y*TILE+28,12,12);
+  ctx.fillStyle='#1a4a1a';ctx.beginPath();ctx.arc(x*TILE+20,y*TILE+16,16,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1e521e';ctx.beginPath();ctx.arc(x*TILE+12,y*TILE+12,10,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1a4a1a';ctx.beginPath();ctx.arc(x*TILE+28,y*TILE+12,10,0,Math.PI*2);ctx.fill();
+};
+tileDraw[T.WATER] = (x,y) => {
+  ctx.fillStyle='#2a6a9a';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+  ctx.fillStyle='#3a7aaa';ctx.fillRect(x*TILE+4,y*TILE+8,10,3);ctx.fillRect(x*TILE+18,y*TILE+22,14,3);ctx.fillRect(x*TILE+8,y*TILE+32,8,2);
+};
+tileDraw[T.PATH] = (x,y) => {
+  ctx.fillStyle=['#b8985a','#b49a56','#bc9658'][(x+y)%3];ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+  ctx.fillStyle='#a88848';ctx.fillRect(x*TILE+6,y*TILE+18,28,3);
+};
+tileDraw[T.DOOR] = (x,y) => {
+  ctx.fillStyle='#6a4a2a';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+  ctx.fillStyle='#5a3a1a';ctx.fillRect(x*TILE+5,y*TILE+5,TILE-10,TILE-10);
+  ctx.fillStyle='#8a6a3a';ctx.fillRect(x*TILE+8,y*TILE+8,TILE-16,TILE-16);
+  ctx.fillStyle='#c89030';ctx.beginPath();ctx.arc(x*TILE+28,y*TILE+20,3,0,Math.PI*2);ctx.fill();
+};
+tileDraw[T.CHEST] = (x,y) => {
+  ctx.fillStyle='#5a3a1a';ctx.fillRect(x*TILE+4,y*TILE+8,TILE-8,TILE-20);
+  ctx.fillStyle='#c89030';ctx.fillRect(x*TILE+6,y*TILE+14,TILE-12,4);ctx.fillRect(x*TILE+6,y*TILE+22,TILE-12,4);
+  ctx.fillStyle='#e8b030';ctx.beginPath();ctx.arc(x*TILE+20,y*TILE+24,3,0,Math.PI*2);ctx.fill();
+};
+tileDraw[T.BRIDGE] = (x,y) => {
+  ctx.fillStyle='#9a8a6a';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+  ctx.fillStyle='#8a7a5a';ctx.fillRect(x*TILE+3,y*TILE+6,TILE-6,5);ctx.fillRect(x*TILE+3,y*TILE+18,TILE-6,5);ctx.fillRect(x*TILE+3,y*TILE+30,TILE-6,5);
+  ctx.fillStyle='#7a6a4a';ctx.fillRect(x*TILE+6,y*TILE+11,5,18);ctx.fillRect(x*TILE+18,y*TILE+11,5,18);ctx.fillRect(x*TILE+30,y*TILE+11,5,18);
+};
+tileDraw[T.HOUSEWALL] = (x,y) => {
+  ctx.fillStyle='#8a6a3a';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+  ctx.fillStyle='#7a5a2a';ctx.fillRect(x*TILE+3,y*TILE+3,TILE-6,TILE-6);
+  ctx.fillStyle='#6a4a1a';ctx.fillRect(x*TILE+6,y*TILE+6,TILE-12,TILE-12);
+};
+tileDraw[T.THRONE] = (x,y) => {
+  ctx.fillStyle='#5a3a1a';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+  ctx.fillStyle='#c89030';ctx.fillRect(x*TILE+8,y*TILE+8,24,20);
+  ctx.fillStyle='#e8b030';ctx.fillRect(x*TILE+12,y*TILE+12,16,6);ctx.fillRect(x*TILE+14,y*TILE+20,4,6);ctx.fillRect(x*TILE+22,y*TILE+20,4,6);
+};
+tileDraw[T.RUG] = (x,y) => {
+  ctx.fillStyle='#6a2a3a';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+  ctx.fillStyle='#8a3a5a';ctx.fillRect(x*TILE+4,y*TILE+4,TILE-8,TILE-8);
+  ctx.fillStyle='#a04060';ctx.fillRect(x*TILE+8,y*TILE+20,24,4);
+};
+tileDraw[T.TORCH] = (x,y) => {
+  ctx.fillStyle='#3a3a3a';ctx.fillRect(x*TILE+16,y*TILE+8,8,24);
+  ctx.fillStyle='#ff8a30';ctx.beginPath();ctx.arc(x*TILE+20,y*TILE+8,6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffd030';ctx.beginPath();ctx.arc(x*TILE+20,y*TILE+8,3,0,Math.PI*2);ctx.fill();
+};
+
+// ─── ROOM MAPS (COLSxROWS tile grids) ───
+// Each room has a tile[][] and overlays (npcs, items at tile coords)
+const rooms = {};
+
+function defRoom(id, tiles, overlays, opts) {
+  rooms[id] = { tiles, overlays:overlays||[], ...(opts||{}) };
+}
+
+// Helper: parse a string map into tile[][] 
+function parseMap(strs, legend) {
+  return strs.map(row => [...row].map(ch => legend[ch]!==undefined ? legend[ch] : T.GRASS));
+}
+
+const L = {
+  '.':T.FLOOR,',':T.GRASS,'#':T.WALL,'T':T.TREE,'W':T.WATER,
+  'P':T.PATH,'D':T.DOOR,'C':T.CHEST,'B':T.BRIDGE,'H':T.HOUSEWALL,
+  'R':T.RUG,'S':T.THRONE,'F':T.TORCH,' ':'skip',
+};
+
+// ─── ROOM DEFINITIONS ───
+// Overlays: {type, x, y, data}
+// type: 'npc', 'item', 'enemy', 'player' (player spawn)
+
+function initWorld() {
+  defRoom('/', parseMap([
+    '######################',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,TT,,,,,,TT,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,PPP,,,,,,,,,,,,,,#',
+    '#,,,PPP,,,,,,,,,,,,,,#',
+    '#,,,PPP,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+  ], L), [
+    {type:'player',x:10,y:5},
+    {type:'door',x:3,y:2,label:'castle/',room:'/castle',desc:'Camino al castillo'},
+    {type:'door',x:12,y:1,label:'forest/',room:'/forest',desc:'Entrada al bosque'},
+    {type:'door',x:18,y:4,label:'village/',room:'/village',desc:'Camino a la aldea'},
+    {type:'npc',x:6,y:4,label:'Guard',desc:'Un guardia real con armadura reluciente.',dialog:['El reino está en peligro... el Rey ha caído bajo un hechizo.','Adéntrate en el bosque y busca la cueva.'],dialogAfter:['¡Has salvado el reino, héroe! Tu manejo de Linux es tan letal como tu espada.','El Rey ha despertado y quiere darte las gracias en persona.'],patrol:{dir:0,steps:2}},
+    {type:'item',x:14,y:7,label:'letter.txt',icon:'📜',desc:'CARTA DEL VIEJO ALDRIC\n━━━━━━━━━━━━━━━━━━━━━\n"Viajero, si lees esto aún hay esperanza.\nEl Rey ha caído bajo un hechizo oscuro.\nBusca la espada ancestral y adéntrate en la cueva."',takeable:false},
+  ]);
+
+  defRoom('/castle', parseMap([
+    '######################',
+    '#HHHHHHHHHHHHHHHHHHHH#',
+    '#H..................H#',
+    '#H..FFF.............H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..FFF.............H#',
+    '#H..................H#',
+    '#HHHHH..D..HHHHHHHHHH#',
+  ], L), [
+    {type:'player',x:10,y:8},
+    {type:'door',x:9,y:1,label:'gate/',room:'/castle/gate',desc:'Puerta principal'},
+    {type:'door',x:8,y:8,label:'../',room:'/',desc:'Volver al camino'},
+    {type:'npc',x:4,y:3,label:'Tower_Guard',desc:'Guardia de la torre oeste.',dialog:['Arriba hay un arco en la torre. Nadie lo usa desde hace años.','Para llegar: primero ve a gate/ con "cd gate/", luego "cd guard_tower/".'],dialogAfter:['Lograste lo imposible. El reino está en paz gracias a ti.','Nunca había visto a alguien manejar el terminal con tanta destreza.'],patrol:{dir:2,steps:1}},
+    {type:'item',x:15,y:4,label:'cofre',icon:'🗃️',desc:'COFRE ANTIGUO\nUn cofre de hierro con un candado sólido. Necesitas una llave especial.\n\n💡 Usa "./cofre" si tienes la llave.',takeable:false,usable:true,useAction:()=>{
+      if(!player.inventory.includes('iron_key.txt'))return ['❌ El cofre está cerrado. Necesitas una llave.','err'];
+      player.inventory=player.inventory.filter(i=>i!=='iron_key.txt');
+      player.armor=true;player.def+=5;
+      updateHud();
+      renderRoom();
+      return ['🗝️  Usaste la Llave de Hierro. El cofre se abre...\n\n  🛡️  ARMADURA DE ACERO LEGENDARIA\n  ¡Te has equipado con la armadura del reino!\n  Defensa +5 — visible en tu personaje.','out'];
+    }},
+  ]);
+
+  defRoom('/castle/gate', parseMap([
+    '######################',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,RRRRR,,RRRRR,,,,,#',
+    '#,,,RRRRR,,RRRRR,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+  ], L), [
+    {type:'player',x:10,y:7},
+    {type:'door',x:6,y:2,label:'throne_room/',room:'/castle/gate/throne_room',desc:'Sala del trono'},
+    {type:'door',x:15,y:2,label:'guard_tower/',room:'/castle/gate/guard_tower',desc:'Torre de guardia'},
+    {type:'door',x:1,y:4,label:'../',room:'/castle',desc:'Volver al castillo'},
+    {type:'item',x:10,y:3,label:'shield.txt',icon:'🛡️',desc:'ESCUDO DE ACERO\n━━━━━━━━━━━━━━\nUn escudo con el emblema del halcón. Abollado pero resistente.\n\n💡 Usa "cp shield.txt ~/" para equiparlo. Defensa +3.',takeable:true,onTake:()=>{player.def+=3;player.inventory.push('shield.txt');return '🛡️ Escudo equipado. Defensa +3.'}},
+    {type:'enemy',x:8,y:4,label:'Goblin_Sentinel',hp:22,maxHp:22,atk:8,def:3,xp:18,gold:15,dialog:'Un goblin pequeño pero ruidoso te bloquea el paso.'},
+  ]);
+
+  defRoom('/castle/gate/throne_room', parseMap([
+    '######################',
+    '#HHHHHHHHHHHHHHHHHHHH#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#HHHHHHHHHHHH..HHHHHH#',
+  ], L), [
+    {type:'player',x:5,y:6},
+    {type:'door',x:14,y:8,label:'../',room:'/castle/gate',desc:'Volver a la puerta'},
+    {type:'npc',x:10,y:3,label:'King',desc:'👑 REY LEOVIGILDO\nEstá sentado en su trono, mirada vidriosa.',dialog:['"El... el susurro... viene del bosque..."','No parece reconocerte. Tal vez puedas ayudarlo más adelante.'],dialogAfter:['¡Te has convertido en un verdadero maestro de Linux! —dice el Rey con orgullo.','"Tu habilidad con el terminal ha salvado nuestro reino. Sigue explorando, que el conocimiento es infinito."']},
+    {type:'npc',x:4,y:4,label:'Orin',desc:'Un anciano con túnica azul.',dialog:['El Rey no ha sido el mismo desde la luna negra.','Por favor, encuentra el origen del mal en el bosque.'],dialogAfter:['La luz ha vuelto al reino. Has demostrado que el verdadero poder está en el conocimiento.','Sigue aprendiendo, joven. Linux es un océano infinito. ¡Navega siempre!']},
+  ]);
+
+  defRoom('/castle/gate/guard_tower', parseMap([
+    '######################',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+  ], L), [
+    {type:'player',x:10,y:7},
+    {type:'door',x:10,y:1,label:'../',room:'/castle/gate',desc:'Bajar de la torre'},
+    {type:'item',x:15,y:3,label:'bow.txt',icon:'🏹',desc:'ARCO CORTO\n━━━━━━━━━━━━\nArco de fresno bien trabajado, cuerda aún tensa.\n\n💡 Usa "cp bow.txt ~/". Ataque +4.',takeable:true,onTake:()=>{player.atk+=4;player.inventory.push('bow.txt');return '🏹 Arco equipado. Ataque +4.'}},
+  ]);
+
+  defRoom('/forest', parseMap([
+    '######################',
+    '#TTTT,,,,TTTT,,,,,TTT#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,PPP,,,,,,,,,,,,,,#',
+    '#,,,PPP,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#TTTT,,,,,,,,,,,,,TTT#',
+  ], L), [
+    {type:'player',x:10,y:5},
+    {type:'door',x:2,y:1,label:'cave/',room:'/forest/cave',desc:'Entrada a la cueva'},
+    {type:'door',x:16,y:2,label:'dark_cave/',room:'/forest/dark_cave',desc:'Cueva oscura'},
+    {type:'door',x:18,y:4,label:'../',room:'/',desc:'Volver al camino'},
+    {type:'npc',x:11,y:2,label:'Aldric',desc:'🧙 ALDRIC — El Errante\nVestido con túnica violeta, barba larga y sombrero puntiagudo.',dialog:[
+      '¡Te estaba esperando! Toma, esta vara de luz te guiará.',
+      'Con ella podrás explorar la cueva oscura al este.\n(Ejecútala con "./light_rod")',
+    ],dialogAfter:[
+      'Sabía que lo lograrías. Tu dominio de Linux es impresionante.',
+      'El reino está en deuda contigo. Y recuerda: "man" es tu mejor amigo.',
+    ],onTalk:()=>{
+      if(!player.inventory.includes('light_rod.txt')){
+        player.inventory.push('light_rod.txt');
+        diaryAdd('./<archivo>', 'Ejecuta un archivo. Ej: ./light_rod para encender/apagar la linterna.');
+        return '🔦 Recibiste: Vara de Luz.';
+      }
+      return null;
+    }},
+    {type:'npc',x:5,y:3,label:'Oroku',desc:'👴 OROKU — Venerable maestro de conocimientos Linux.',dialog:['Saludos, joven aprendiz. Si respondes 3 preguntas sobre Linux te entregaré una recompensa.','Pero cuidado: fallar tiene consecuencias...'],dialogAfter:['Increíble. Has demostrado un dominio de Linux que pocos alcanzan.','El reino está a salvo gracias a tu conocimiento. Sigue así, el camino del terminal es infinito.']},
+  ]);
+
+  defRoom('/forest/dark_cave', parseMap([
+    '######################',
+    '#....................#',
+    '#....................#',
+    '#....................#',
+    '#....................#',
+    '#....................#',
+    '#....................#',
+    '#....................#',
+    '#....................#',
+  ], L), [
+    {type:'player',x:10,y:7},
+    {type:'door',x:10,y:1,label:'../',room:'/forest',desc:'Salir de la cueva oscura'},
+    {type:'enemy',x:5,y:3,label:'Shadow_Beast',hp:55,maxHp:55,atk:15,def:7,xp:70,gold:40,dialog:'Una bestia sombría de ojos rojos. Se mueve en la oscuridad...',requires:'forest'},
+    {type:'enemy',x:15,y:5,label:'Void_Wraith',hp:50,maxHp:50,atk:14,def:6,xp:65,gold:35,dialog:'Un espectro de energía oscura que flota en el aire...',requires:'forest'},
+  ], {dark:true});
+
+  defRoom('/forest/cave', parseMap([
+    '######################',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,TTT,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,TTT,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+  ], L), [
+    {type:'player',x:10,y:7},
+    {type:'door',x:10,y:1,label:'cave_deep/',room:'/forest/cave/deep',desc:'Profundidades de la cueva'},
+    {type:'door',x:1,y:7,label:'../',room:'/forest',desc:'Salir de la cueva'},
+    {type:'enemy',x:8,y:3,label:'Goblin',hp:38,maxHp:38,atk:13,def:6,xp:35,gold:28,dialog:'Un goblin escuálido pero peligroso. Sus ojos recorren tu equipo...',requires:'forest'},
+    {type:'item',x:3,y:5,label:'gold.txt',icon:'💰',desc:'BOLSA DE ORO\n━━━━━━━━━━\nPequeña bolsa de cuero con monedas.\n\n💡 Usa "cp gold.txt ~/".',takeable:true,onTake:()=>{player.gold+=15;return '💰 +15 de oro.'}},
+  ]);
+
+  defRoom('/forest/cave/deep', parseMap([
+    '######################',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+  ], L), [
+    {type:'player',x:10,y:7},
+    {type:'door',x:10,y:1,label:'../',room:'/forest/cave',desc:'Volver a la entrada'},
+    {type:'enemy',x:12,y:3,label:'Goblin_Chief',hp:100,maxHp:100,atk:20,def:11,xp:150,gold:100,nopatrol:true,dialog:'EL JEFE GOBBLIN — imponente, con armadura de huesos y ojos llameantes. Se necesitará más que un simple golpe para vencerlo.'},
+    {type:'item',x:15,y:4,label:'treasure.txt',icon:'👑',desc:'TESORO REAL\n━━━━━━━━━━\n¡El tesoro perdido de Aetheria! Oro y joyas por doquier.\n\n💡 Usa "cp treasure.txt ~/".',takeable:true,onTake:()=>{player.gold+=50;return '👑 +50 de oro. ¡Tesoro encontrado!';}},
+  ]);
+
+  defRoom('/village', parseMap([
+    '######################',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+    '#,,HHH,,,HHH,,,,,,,,,#',
+    '#,,HDH,,,HDH,,,,,,,,,#',
+    '#,,,,,,,,,,,,,,,,,,,,#',
+  ], L), [
+    {type:'player',x:10,y:7},
+    {type:'door',x:3,y:6,label:'inn/',room:'/village/inn',desc:'Posada "Rusty Sword"'},
+    {type:'door',x:10,y:6,label:'shop/',room:'/village/shop',desc:'Tienda general'},
+    {type:'door',x:18,y:7,label:'../',room:'/',desc:'Volver al camino'},
+    {type:'npc',x:15,y:3,label:'Brom',desc:'Un aldeano con ropa de trabajo.',dialog:['Bienvenido a Villa Roble Alto.','En la posada puedes descansar, y en la tienda hay provisiones.'],dialogAfter:['¡Viva el héroe! Gracias a ti podemos vivir en paz.','Nunca olvides: el conocimiento de Linux que adquiriste es tu mejor arma.']},
+  ]);
+
+  defRoom('/village/inn', parseMap([
+    '######################',
+    '#HHHHHHHHHHHHHHHHHHHH#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#HHHHHHH..D..HHHHHHHH#',
+  ], L), [
+    {type:'player',x:10,y:7},
+    {type:'door',x:10,y:8,label:'../',room:'/village',desc:'Salir de la posada'},
+    {type:'npc',x:5,y:3,label:'Lyra',desc:'🍺 LYRA — La Cantinera\nMujer rubia con delantal, secando un vaso.',dialog:['¡Forastero! Por 5 de oro puedes descansar.','Usa "./rest" para recuperar toda tu vida.'],dialogAfter:['¡Héroe! La primera ronda la pagamos nosotros.','Gracias por liberar al Rey. Tu manejo de Linux es legendario en estas tierras.']},
+    {type:'item',x:6,y:5,label:'rest',icon:'🛌',desc:'CAMA DE MADERA\nUn camastro con colchón de paja.\n\n💡 Usa "./rest" (cuesta 5 de oro).',takeable:false,usable:true,useAction:()=>{
+      if(player.gold<5)return ['❌ No tienes suficiente oro.', 'err'];
+      player.gold-=5;player.hp=player.maxHp;
+      for(const s of player.skills)s.uses=s.maxUses;
+      return [`🛌 Descansas profundamente. ❤️ Vida restaurada al máximo. Habilidades recargadas. Oro: ${player.gold}`, 'out'];
+    }},
+  ]);
+
+  defRoom('/village/shop', parseMap([
+    '######################',
+    '#HHHHHHHHHHHHHHHHHHHH#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#H..................H#',
+    '#HHHHHHH..D..HHHHHHHH#',
+  ], L), [
+    {type:'player',x:10,y:7},
+    {type:'door',x:10,y:8,label:'../',room:'/village',desc:'Salir de la tienda'},
+    {type:'npc',x:6,y:4,label:'Fendrel',desc:'🧓 FENDREL — El Mercader\nAnciano con gafas de media luna.',dialog:['¡Bienvenido! Vendo armas, armaduras y libros de habilidades.','💡 Usa "cp <item> ~/" para comprar.\n📜 leather_armor (15💰 +2 def)\n🔮 skill_power (25💰 aprende Power Strike)\n💚 skill_heal (20💰 aprende Heal)\n⚔️ sword (30💰 +6 atk)\n🧪 potion (8💰 +40 HP)'],dialogAfter:['¡El héroe ha vuelto! Toma, todo lo que quieras, tiene descuento.','Gracias por salvar el reino. Y recuerda: "cp" para copiar, "kill" para vencer. Así funciona Linux y la vida.']},
+    {type:'item',x:5,y:5,label:'potion.txt',icon:'🧪',desc:'POCIÓN DE CURACIÓN\nFrasco con líquido rojo burbujeante.\n\n💡 Usa "cp potion.txt ~/" (8 de oro).\nLuego "./potion" para beberla (+40 HP).',takeable:true,onTake:()=>{
+      if(player.gold<8)return ['❌ Fendrel niega: "No tienes suficiente oro."', 'err'];
+      player.gold-=8;player.inventory.push('potion.txt');
+      return ['🧪 Compraste Poción de Curación. Usa "./potion" para beberla.','out'];
+    }},
+    {type:'item',x:7,y:5,label:'leather_armor.txt',icon:'🦺',desc:'ARMADURA DE CUERO\nArmadura ligera pero resistente.\n\n💡 Usa "cp leather_armor.txt ~/" (15 de oro, defensa+2).\nLuego "./leather_armor" para equiparla.',takeable:true,onTake:()=>{
+      if(player.gold<15)return ['❌ Fendrel: "15 monedas o nada."','err'];
+      player.gold-=15;player.inventory.push('leather_armor.txt');
+      return ['🦺 Compraste Armadura de Cuero. Usa "./leather_armor" para equiparla.','out'];
+    }},
+    {type:'item',x:11,y:5,label:'skill_power.txt',icon:'⚡',desc:'LIBRO: POWER STRIKE\nAprende a golpear con el doble de fuerza.\n\n💡 Usa "cp skill_power.txt ~/" (25 de oro).\nEn combate: "./power_strike" (1 uso por batalla).',takeable:true,onTake:()=>{
+      if(player.gold<25)return ['❌ Fendrel: "25 monedas o nada."','err'];
+      player.gold-=25;player.inventory.push('skill_power.txt');
+      if(!player.skills.find(s=>s.name==='Power Strike'))player.skills.push({name:'Power Strike',maxUses:1,uses:1});
+      return ['⚡ Aprendiste Power Strike. En combate usa "./power_strike".','out'];
+    }},
+    {type:'item',x:13,y:5,label:'skill_heal.txt',icon:'💚',desc:'LIBRO: HEAL\nAprende a canalizar energía para curarte.\n\n💡 Usa "cp skill_heal.txt ~/" (20 de oro).\nEn combate: "./heal" (1 uso por batalla, +30 HP).',takeable:true,onTake:()=>{
+      if(player.gold<20)return ['❌ Fendrel: "20 monedas o nada."','err'];
+      player.gold-=20;player.inventory.push('skill_heal.txt');
+      if(!player.skills.find(s=>s.name==='Heal'))player.skills.push({name:'Heal',maxUses:1,uses:1});
+      return ['💚 Aprendiste Heal. En combate usa "./heal".','out'];
+    }},
+    {type:'item',x:9,y:5,label:'sword.txt',icon:'⚔️',desc:'ESPADA DE ACERO\nUna hoja de acero bien afilada.\n\n💡 Usa "cp sword.txt ~/" (30 de oro, ataque+6).\nLuego "./sword" para equiparla.',takeable:true,onTake:()=>{
+      if(player.gold<30)return ['❌ Fendrel: "30 monedas o nada."','err'];
+      player.gold-=30;player.inventory.push('sword.txt');
+      return ['⚔️ Compraste Espada de Acero. Usa "./sword" para equiparla.','out'];
+    }},
+  ]);
+}
+
+// ─── GAME STATE ───
+const player = {
+  room:'/',
+  px:0, py:0,
+  hp:100, maxHp:100,
+  atk:12, def:5,
+  level:1, xp:0, xpNext:50,
+  gold:0, inventory:[], kills:0, skills:[], armor:false,
+};
+
+let gameState = 'idle'; // idle | dialogue | battle | quiz
+let dialogueTarget = null;
+let battleEnemy = null;
+let quizState = null;
+let sageLockedUntil = 0;
+let bossDefeated = false;
+let hintEl = null;
+let lanternOn = false;
+const rewardedEnemies = new Set();
+
+const diary = [];
+function diaryAdd(cmd, explanation) {
+  if (!diary.some(e => e.cmd === cmd))
+    diary.push({ cmd, explanation });
+}
+
+const MOTIVATIONAL = [
+  '"No está mal equivocarse. Lo importante es que investigues y aprendas."',
+  '"Cada error es una oportunidad para aprender algo nuevo."',
+  '"No te rindas. La respuesta correcta te espera en los manuales."',
+  '"Saber equivocarse es el primer paso para saber acertar."',
+  '"No necesitas memorizarlo todo. Basta con saber dónde buscar."',
+  '"La línea de comandos no muerde. Experimenta sin miedo."',
+  '"El mejor administrador Linux es el que más veces ha roto su sistema."',
+  '"Lee el mensaje de error. Casi siempre está la solución."',
+  '"Si no lo sabes, man lo tiene. Siempre."',
+  '"Los que más saben son los que más han fallado antes."',
+  '"Un verdadero maestro nunca deja de aprender."',
+  '"No tengas miedo al fracaso. Ten miedo a no intentarlo."',
+  '"La sabiduría no está en no caer, sino en levantarse cada vez."',
+  '"Cada pregunta sin respuesta es una puerta cerrada. Tú tienes la llave."',
+  '"El conocimiento no ocupa espacio. Llena tu mente."',
+  '"No importa cuánto tardes, sino que llegues."',
+  '"Cada error es un acierto disfrazado."',
+  '"No te preocupes por los errores. Preocúpate por no aprender de ellos."',
+  '"En Linux, como en la vida, siempre hay un comando nuevo por aprender."',
+  '"No hay preguntas tontas. Solo tontos que no preguntan."',
+  '"Investigar es el superpoder del programador."',
+  '"No lo sabes hoy. Lo sabrás mañana si buscas hoy."',
+  '"El hombre más sabio es el que sabe que no sabe."',
+  '"No tengas prisa. La terminal no se va a ningún lado."',
+  '"Cada fallo te acerca un paso más a la respuesta."',
+  '"El que falla y aprende, avanza. El que no falla, se estanca."',
+  '"No hay fracaso, solo retroalimentación."',
+  '"Documentación abierta, mente abierta."',
+  '"El conocimiento no baja del cielo. Se construye."',
+  '"No busques la respuesta fácil. Busca entender."',
+  '"Aprender sin práctica es como remar sin agua."',
+  '"La mejor lección es la que te duele un poco."',
+  '"No temas al error. Tema a la ignorancia."',
+  '"Cada respuesta que buscas te hace más fuerte."',
+  '"El camino del conocimiento está lleno de bifurcaciones."',
+  '"No hay atajos. Solo hay aprendizaje."',
+  '"El que sabe, hace. El que entiende, enseña."',
+  '"No es vergüenza no saber. Es vergüenza no querer saber."',
+  '"La práctica no hace la perfección. La práctica hace el hábito."',
+  '"No dejes para mañana lo que puedas aprender hoy."',
+  '"El conocimiento es el único tesoro que crece al compartirlo."',
+  '"No basta con saber. Hay que comprender."',
+  '"Cada línea de código que entiendes es una victoria."',
+  '"No hay problema sin solución. Solo problemas sin paciencia."',
+  '"La perseverancia es el comando más poderoso."',
+  '"No preguntes qué puede hacer tu sistema por ti. Pregunta qué puedes hacer tú con tu sistema."',
+  '"El que pregunta es un tonto por cinco minutos. El que no pregunta es un tonto para siempre."',
+  '"No tengas miedo de romper algo. Así aprendiste a caminar."',
+  '"Cada error en la terminal es una lección en vivo."',
+  '"La diferencia entre un novato y un experto es cuántas veces han fallado."',
+  '"No se trata de ser el mejor. Se trata de ser mejor que ayer."',
+  '"La curiosidad no mató al gato. Lo hizo experto."',
+  '"No hay fracaso, solo datos para el log."',
+  '"El aprendizaje es un viaje, no un destino."',
+  '"Quien mucho pregunta, mucho aprende."',
+];
+
+const SAGE_QUESTIONS = [
+  {q:'¿Quién creó el kernel de Linux?',o:['Richard Stallman','Linus Torvalds','Ken Thompson'],a:1},
+  {q:'¿En qué año se lanzó la versión 1.0 del kernel Linux?',o:['1991','1994','1996'],a:1},
+  {q:'¿En qué archivo de log se ven los intentos fallidos de SSH?',o:['/var/log/syslog','/var/log/auth.log','/var/log/messages'],a:1},
+  {q:'¿Qué es un sistema embebido?',o:['Un PC con Linux','Sistema dedicado a una función específica','Un servidor en la nube'],a:1},
+  {q:'¿Qué comando muestra el contenido de un archivo?',o:['ls','cat','cd'],a:1},
+  {q:'¿Cuál es el shell más común en Linux?',o:['Bash','Zsh','Fish'],a:0},
+  {q:'¿Qué significa "GNU" en GNU/Linux?',o:['GNU No Unix','General Unix','GNU\'s Not Unix'],a:2},
+  {q:'¿Qué directorio contiene logs del sistema?',o:['/var/log','/etc/log','/proc/log'],a:0},
+  {q:'¿Cuál es el PID del proceso init/systemd?',o:['0','1','2'],a:1},
+  {q:'¿Qué comando mata un proceso por PID?',o:['kill','end','stop'],a:0},
+  {q:'¿Qué distribución usa apt como gestor de paquetes?',o:['Arch','Debian','Fedora'],a:1},
+  {q:'¿Qué archivo contiene los repositorios en Debian/Ubuntu?',o:['/etc/apt/sources.list','/etc/apt/repos.conf','/etc/apt/sources.d'],a:0},
+  {q:'¿Qué comando copia archivos entre máquinas por SSH?',o:['cp','scp','ssh-copy'],a:1},
+  {q:'¿Qué permiso numérico da lectura+ejecución al dueño?',o:['500','600','700'],a:0},
+  {q:'¿Qué comando cambia permisos de un archivo?',o:['chmod','chown','chperm'],a:0},
+  {q:'¿Qué sistema de archivos es nativo de Linux?',o:['NTFS','FAT32','ext4'],a:2},
+  {q:'¿Cómo se ven las tablas de IPtables?',o:['iptables -L','iptables -S','iptables -T'],a:0},
+  {q:'¿Qué comando renombra archivos en Linux?',o:['ren','mv','rename'],a:1},
+  {q:'¿Qué señal de kill no puede atrapar un proceso?',o:['SIGTERM','SIGKILL','SIGHUP'],a:1},
+  {q:'¿Qué archivo de red define interfaces en Debian?',o:['/etc/network/interfaces','/etc/netplan/config','/etc/sysconfig/network'],a:0},
+  {q:'¿Qué servicio de logging moderno usan la mayoría de distros?',o:['rsyslog','syslog-ng','journald'],a:2},
+  {q:'¿Qué comando busca texto dentro de archivos?',o:['find','grep','locate'],a:1},
+  {q:'¿Qué directorio contiene binarios del sistema?',o:['/bin','/lib','/opt'],a:0},
+  {q:'¿Qué variable de entorno contiene la ruta de búsqueda de comandos?',o:['$HOME','$SHELL','$PATH'],a:2},
+  {q:'¿Qué comando muestra el directorio actual?',o:['pwd','cwd','dir'],a:0},
+  {q:'¿Qué archivo del kernel es cargado por LKM?',o:['.ko','.so','.o'],a:0},
+  {q:'¿Qué herramienta monitorea recursos del sistema en tiempo real?',o:['top','ps','ls'],a:0},
+  {q:'¿En qué archivo se configuran los cron jobs del usuario?',o:['/etc/crontab','crontab -e','/var/spool/cron'],a:1},
+  {q:'¿Cuál es el puerto por defecto de SSH?',o:['22','23','21'],a:0},
+  {q:'¿Qué comando descarga archivos de internet?',o:['cat','wget','ping'],a:1},
+  {q:'¿Qué sistema de virtualización usa contenedores?',o:['VMware','Docker','VirtualBox'],a:1},
+  {q:'¿Qué comando muestra el kernel version?',o:['uname -r','kernel --version','lsmod'],a:0},
+  {q:'¿Qué archivo contiene usuarios del sistema?',o:['/etc/users','/etc/passwd','/etc/login'],a:1},
+  {q:'¿Qué comando agrega un usuario nuevo?',o:['useradd','newuser','adduser'],a:0},
+  {q:'¿Qué protocolo se usa para sincronizar tiempo?',o:['HTTP','NTP','FTP'],a:1},
+  {q:'¿Qué es Yocto?',o:['Un juego','Un sistema de build para embedded Linux','Un gestor de paquetes'],a:1},
+  {q:'¿Qué archivo contiene la configuración del bootloader GRUB?',o:['/etc/grub.conf','/boot/grub/grub.cfg','/etc/default/grub'],a:2},
+  {q:'¿Qué directorio contiene drivers del kernel?',o:['/dev','/lib/modules','/sys'],a:1},
+  {q:'¿Qué comando muestra las particiones del disco?',o:['fdisk -l','parted -l','lsblk'],a:2},
+  {q:'¿Qué señal rellena el archivo core dump?',o:['SIGQUIT','SIGABRT','SIGSEGV'],a:2},
+  {q:'¿Qué es Buildroot?',o:['Un gestor de paquetes','Una herramienta para crear sistemas embebidos','Un kernel'],a:1},
+  {q:'¿Qué comando activa una interface de red?',o:['ifup','ifconfig up','ip link up'],a:0},
+  {q:'¿Qué sistema de archivos se usa en memorias USB?',o:['ext4','NTFS','vfat'],a:2},
+  {q:'¿Qué archivo temporal vive solo en RAM?',o:['/tmp','/var/tmp','/run'],a:2},
+  {q:'¿Qué comando descomprime un archivo .tar.gz?',o:['tar -xzf','tar -czf','unzip'],a:0},
+  {q:'¿Qué es BusyBox?',o:['Un gestor de ventanas','Un binario que integra comandos Unix en embebidos','Un compilador'],a:1},
+  {q:'¿Qué comando enlaza una biblioteca compartida?',o:['ldconfig','ldd','gcc'],a:0},
+  {q:'¿Qué archivo define los servicios en systemd?',o:['.service','.conf','.sh'],a:0},
+  {q:'¿Qué directorio contiene fuentes de paquetes descargados por apt?',o:['/var/cache/apt','/var/lib/apt','/etc/apt'],a:0},
+  {q:'¿Cuál fue la primera distribución Linux?',o:['Debian','Slackware','Red Hat'],a:1},
+  {q:'¿Qué archivo contiene las contraseñas hasheadas?',o:['/etc/passwd','/etc/shadow','/etc/security'],a:1},
+  {q:'¿Qué es U-Boot?',o:['Un bootloader para sistemas embebidos','Un kernel','Un sistema de archivos'],a:0},
+  {q:'¿Qué comando muestra los módulos cargados?',o:['lsmod','insmod','modprobe'],a:0},
+  {q:'¿Qué comando verifica conectividad de red?',o:['ping','traceroute','netstat'],a:0},
+  {q:'¿Qué significa "root" en Linux?',o:['El usuario administrador','El directorio raíz','Ambas'],a:2},
+];
+
+// ─── TERMINAL ───
+const termEl = document.getElementById('term');
+const cmdEl = document.getElementById('cmd');
+const promptEl = document.getElementById('prompt');
+const locEl = document.getElementById('locDisplay');
+const hpEl = document.getElementById('hpVal');
+const maxHpEl = document.getElementById('maxHpVal');
+const atkEl = document.getElementById('atkVal');
+const defEl = document.getElementById('defVal');
+const lvlEl = document.getElementById('lvlVal');
+const goldEl = document.getElementById('goldVal');
+
+let history = [];
+let histIdx = -1;
+
+function tPrint(text, cls='out') {
+  const d = document.createElement('div');
+  d.className = 'term-line ' + cls;
+  d.textContent = text;
+  termEl.appendChild(d);
+  termEl.scrollTop = termEl.scrollHeight;
+}
+
+function tPrintMany(lines) {
+  for (const [text, cls] of lines) tPrint(text, cls);
+}
+
+function setHint(text, cls){
+  if(hintEl){
+    hintEl.textContent = text;
+    hintEl.className = 'term-line ' + cls;
+    return;
+  }
+  hintEl = document.createElement('div');
+  hintEl.className = 'term-line ' + cls;
+  hintEl.textContent = text;
+  termEl.appendChild(hintEl);
+  termEl.scrollTop = termEl.scrollHeight;
+}
+
+function clearHint(){
+  if(hintEl){
+    hintEl.remove();
+    hintEl = null;
+  }
+}
+
+function updateHud() {
+  hpEl.textContent = player.hp;
+  maxHpEl.textContent = player.maxHp;
+  atkEl.textContent = player.atk;
+  defEl.textContent = player.def;
+  lvlEl.textContent = player.level;
+  goldEl.textContent = player.gold;
+  locEl.textContent = player.room;
+}
+
+function updatePrompt() {
+  promptEl.textContent = `guest@aetheria:${player.room}$ `;
+}
+
+// ─── MOVEMENT ───
+const WALKABLE = [T.FLOOR,T.GRASS,T.PATH,T.DOOR,T.CHEST,T.BRIDGE,T.RUG,T.THRONE,T.TORCH];
+
+function isWalkableTile(tile) { return WALKABLE.includes(tile); }
+
+function tryMove(dx, dy) {
+  if (gameState !== 'idle') return;
+  const room = rooms[player.room];
+  if (!room) return;
+  const nx = player.px + dx, ny = player.py + dy;
+  if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) return;
+  const tile = room.tiles[ny] ? room.tiles[ny][nx] : undefined;
+  if (tile === undefined || tile === 'skip') return;
+  // Doors are always walkable regardless of underlying tile
+  const isDoor = room.overlays.some(o => o.type === 'door' && o.x === nx && o.y === ny);
+  if (!isDoor && !isWalkableTile(tile)) return;
+
+  // Check for enemy blocking
+  const enemyHere = room.overlays.find(o => o.type === 'enemy' && o.hp > 0 && o.x === nx && o.y === ny);
+  if (enemyHere) {
+    tPrint(`⚠️  ${enemyHere.label} te bloquea el paso. Usa "kill <PID>" (revisa "ps" primero).`,'combat');
+    return;
+  }
+
+  player.px = nx; player.py = ny;
+  renderRoom();
+
+  // Check item pickup
+  const item = room.overlays.find(o => o.type === 'item' && o.x === nx && o.y === ny && o.takeable);
+  if (item) {
+    const near = room.overlays.filter(o => {
+      if(o.type !== 'npc' && o.type !== 'item' && o.type !== 'enemy' && o.type !== 'door') return false;
+      if(o.hp === 0) return false;
+      if(room.dark){
+        const vis = lanternOn ? 5 : 2.5;
+        if(Math.hypot(o.x-player.px, o.y-player.py) > vis) return false;
+      }
+      return Math.abs(o.x - player.px) <= 1 && Math.abs(o.y - player.py) <= 1;
+    });
+    if (near.length) {
+      const doors=near.filter(o=>o.type==='door');
+      const rest=near.filter(o=>o.type!=='door');
+      if(doors.length)diaryAdd('cd <puerta>', 'Cambia de sala. Ej: cd castle/, cd forest/, cd ..');
+      if(rest.length)diaryAdd('cat <nombre>', 'Examina o habla con un NPC/item/enemigo. Ej: cat Guard, cat shield.txt');
+      let hint='';
+      if(rest.length)hint+=`📋  Cerca: ${rest.map(o=>o.label).join(', ')} — usa "cat <nombre>"`;
+      if(doors.length){
+        if(hint)hint+=' | ';
+        hint+=`🚪 ${doors.map(o=>o.label==='../'?'"cd .."':`"cd ${o.label}"`).join(', ')} para entrar`;
+      }
+      setHint(hint,'info');
+    } else {
+      clearHint();
+    }
+    return;
+  }
+
+  // Show nearby interactables
+  const near = room.overlays.filter(o => {
+    if(o.type !== 'npc' && o.type !== 'item' && o.type !== 'enemy' && o.type !== 'door') return false;
+    if(o.hp && o.hp <= 0) return false;
+    if(room.dark){
+      const vis = lanternOn ? 5 : 2.5;
+      if(Math.hypot(o.x-player.px, o.y-player.py) > vis) return false;
+    }
+    return Math.abs(o.x - player.px) <= 1 && Math.abs(o.y - player.py) <= 1;
+  });
+  if (near.length) {
+    const doors=near.filter(o=>o.type==='door');
+    const rest=near.filter(o=>o.type!=='door');
+    if(doors.length)diaryAdd('cd <puerta>', 'Cambia de sala. Ej: cd castle/, cd forest/, cd ..');
+    if(rest.length)diaryAdd('cat <nombre>', 'Examina o habla con un NPC/item/enemigo. Ej: cat Guard, cat shield.txt');
+    let hint='';
+    if(rest.length)hint+=`📋  Cerca: ${rest.map(o=>o.label).join(', ')} — usa "cat <nombre>"`;
+    if(doors.length){
+      if(hint)hint+=' | ';
+      hint+=`🚪 ${doors.map(o=>o.label==='../'?'"cd .."':`"cd ${o.label}"`).join(', ')} para entrar`;
+    }
+    setHint(hint,'info');
+  } else {
+    clearHint();
+  }
+}
+
+// ─── ENEMY PATROL ───
+function enemyPatrol() {
+  if(gameState!=='idle')return;
+  for(const roomId in rooms){
+    const room=rooms[roomId];
+    for(const o of room.overlays){
+      if(o.type!=='enemy'||o.hp<=0||o.nopatrol)continue;
+      const dirs=[[0,-1],[0,1],[-1,0],[1,0]];
+      for(let i=dirs.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[dirs[i],dirs[j]]=[dirs[j],dirs[i]];}
+      for(const[dx,dy]of dirs){
+        const nx=o.x+dx,ny=o.y+dy;
+        if(nx<0||nx>=COLS||ny<0||ny>=ROWS)continue;
+        const tile=room.tiles[ny]?.[nx];
+        if(tile===undefined||tile==='skip')continue;
+        const isDoor=room.overlays.some(ov=>ov.type==='door'&&ov.x===nx&&ov.y===ny);
+        const occupied=room.overlays.some(ov=>
+          (ov.type==='enemy'&&ov!==o&&ov.hp>0&&ov.x===nx&&ov.y===ny)||
+          (ov.type==='npc'&&ov.x===nx&&ov.y===ny)||
+          (ov.type==='player'&&ov.x===nx&&ov.y===ny));
+        if(occupied)continue;
+        if(isDoor||isWalkableTile(tile)){o.x=nx;o.y=ny;break;}
+      }
+    }
+  }
+  renderRoom();
+}
+
+function npcPatrol() {
+  if(gameState!=='idle')return;
+  for(const roomId in rooms){
+    const room=rooms[roomId];
+    for(const o of room.overlays){
+      if(o.type!=='npc'||!o.patrol)continue;
+      if(o._ps===undefined)o._ps=0;
+      if(o._pd===undefined)o._pd=1;
+      const dirs=[[0,-1],[0,1],[-1,0],[1,0]];
+      const [dx,dy]=dirs[o.patrol.dir];
+      const nx=o.x+dx*o._pd, ny=o.y+dy*o._pd;
+      if(nx<0||nx>=COLS||ny<0||ny>=ROWS)continue;
+      const tile=room.tiles[ny]?.[nx];
+      if(tile===undefined||tile==='skip')continue;
+      const isDoor=room.overlays.some(ov=>ov.type==='door'&&ov.x===nx&&ov.y===ny);
+      const occupied=room.overlays.some(ov=>
+        (ov.type==='enemy'&&ov.hp>0&&ov.x===nx&&ov.y===ny)||
+        (ov.type==='npc'&&ov!==o&&ov.x===nx&&ov.y===ny)||
+        (ov.type==='player'&&ov.x===nx&&ov.y===ny));
+      if(occupied)continue;
+      if(isDoor||isWalkableTile(tile)){
+        o.x=nx; o.y=ny;
+        o._ps++;
+        if(o._ps>=o.patrol.steps){o._ps=0;o._pd*=-1;}
+      }
+    }
+  }
+  renderRoom();
+}
+
+// ─── AUTO-MOVE TO TARGET ───
+let isMoving = false;
+
+function findTarget(name) {
+  const room = rooms[player.room];
+  if (!room) return null;
+  const clean = name.toLowerCase().replace(/\/$/,'');
+  return room.overlays.find(o => {
+    const ln = (o.label||'').toLowerCase().replace(/\/$/,'');
+    return ln === clean || ln === clean + '.txt' || ln.replace('.txt','') === clean;
+  }) || null;
+}
+
+function bfsPath(sx, sy, tx, ty) {
+  const room = rooms[player.room];
+  if (!room) return null;
+  const visited = new Set();
+  const queue = [{x:sx, y:sy, path:[]}];
+  visited.add(`${sx},${sy}`);
+  while (queue.length) {
+    const {x,y,path} = queue.shift();
+    if (x === tx && y === ty) return path;
+    for (const [dx,dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+      const nx = x+dx, ny = y+dy;
+      const key = `${nx},${ny}`;
+      if (visited.has(key) || nx<0 || nx>=COLS || ny<0 || ny>=ROWS) continue;
+      const tile = room.tiles[ny]?.[nx];
+      if (tile === undefined || tile === 'skip') continue;
+      // Doors are always walkable
+      const isDoor = room.overlays.some(o => o.type === 'door' && o.x === nx && o.y === ny);
+      // Enemy blocks movement (unless it's the target)
+      const hasEnemy = room.overlays.find(o => o.type === 'enemy' && o.hp > 0 && o.x === nx && o.y === ny && !(nx===tx&&ny===ty));
+      if ((!isDoor && !isWalkableTile(tile)) || hasEnemy) continue;
+      visited.add(key);
+      queue.push({x:nx, y:ny, path:[...path, {x:nx, y:ny}]});
+    }
+  }
+  return null; // unreachable
+}
+
+function moveToTarget(tx, ty, callback) {
+  if (isMoving) return;
+  const path = bfsPath(player.px, player.py, tx, ty);
+  if (!path) { tPrint(`❌ No hay camino hacia allí.`,'err'); return; }
+  isMoving = true;
+  gameState = 'moving';
+  let step = 0;
+  function doStep() {
+    if (step >= path.length) {
+      isMoving = false;
+      gameState = 'idle';
+      renderRoom();
+      callback();
+      return;
+    }
+    player.px = path[step].x;
+    player.py = path[step].y;
+    renderRoom();
+    step++;
+    setTimeout(doStep, 100);
+  }
+  doStep();
+}
+
+// Walk to a tile ADJACENT to (tx, ty) instead of on top of it
+function bfsPathAdjacent(tx, ty) {
+  const room = rooms[player.room];
+  if (!room) return null;
+  const visited = new Set();
+  const queue = [{x:player.px, y:player.py, path:[]}];
+  visited.add(`${player.px},${player.py}`);
+  while (queue.length) {
+    const {x,y,path} = queue.shift();
+    // Check if this tile is adjacent to target and walkable
+    const adj = Math.abs(x-tx) + Math.abs(y-ty) === 1;
+    if (adj) return path;
+    for (const [dx,dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+      const nx = x+dx, ny = y+dy;
+      const key = `${nx},${ny}`;
+      if (visited.has(key) || nx<0 || nx>=COLS || ny<0 || ny>=ROWS) continue;
+      // Don't step ON the target tile
+      if (nx===tx && ny===ty) continue;
+      const tile = room.tiles[ny]?.[nx];
+      if (tile === undefined || tile === 'skip') continue;
+      const isDoor = room.overlays.some(o => o.type === 'door' && o.x === nx && o.y === ny);
+      const hasEnemy = room.overlays.find(o => o.type === 'enemy' && o.hp > 0 && o.x === nx && o.y === ny);
+      if ((!isDoor && !isWalkableTile(tile)) || hasEnemy) continue;
+      visited.add(key);
+      queue.push({x:nx, y:ny, path:[...path, {x:nx, y:ny}]});
+    }
+  }
+  return null;
+}
+
+function moveToTargetAdjacent(tx, ty, callback) {
+  if (isMoving) return;
+  const path = bfsPathAdjacent(tx, ty);
+  if (!path) { tPrint(`❌ No hay camino hacia allí.`,'err'); return; }
+  isMoving = true;
+  gameState = 'moving';
+  let step = 0;
+  function doStep() {
+    if (step >= path.length) {
+      isMoving = false;
+      gameState = 'idle';
+      renderRoom();
+      callback();
+      return;
+    }
+    player.px = path[step].x;
+    player.py = path[step].y;
+    renderRoom();
+    step++;
+    setTimeout(doStep, 100);
+  }
+  doStep();
+}
+
+// ─── HIT EFFECT (battle animation) ───
+let hitEffect = null;
+let playerHitEffect = null;
+
+// ─── RENDER MAP ───
+function renderRoom() {
+  const room = rooms[player.room];
+  if (!room) return;
+  ctx.fillStyle='#0a0e0a';ctx.fillRect(0,0,W,H);
+  const tiles = room.tiles;
+  const overlays = room.overlays;
+
+  // Draw tiles
+  for (let y = 0; y < tiles.length && y < ROWS; y++) {
+    for (let x = 0; x < tiles[y].length && x < COLS; x++) {
+      const t = tiles[y][x];
+      if (t === 'skip') continue;
+      const fn = tileDraw[t];
+      if (fn) fn(x, y);
+    }
+  }
+
+  // Draw overlays
+  for (const o of overlays) {
+    if (o.type === 'npc') {
+      const sx=o.x*TILE, sy=o.y*TILE;
+      ctx.fillStyle='rgba(0,0,0,0.3)';ctx.beginPath();ctx.ellipse(sx+20,sy+34,12,5,0,0,Math.PI*2);ctx.fill();
+      const label = o.label;
+      if(label==='Guard'||label==='Tower_Guard'){
+        // Guard: armor + spear
+        ctx.fillStyle='#4a6a8a';ctx.fillRect(sx+10,sy+14,20,16); // body
+        ctx.fillStyle='#6a8aaa';ctx.fillRect(sx+12,sy+4,16,12); // head
+        ctx.fillStyle='#8a9aaa';ctx.fillRect(sx+12,sy+4,16,3); // helmet top
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+5,14,7); // face
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+7,3,3);ctx.fillRect(sx+22,sy+7,3,3); // eyes
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+8,1,1);ctx.fillRect(sx+23,sy+8,1,1); // pupils
+        ctx.fillStyle='#6a4a2a';ctx.fillRect(sx+4,sy+26,4,10); // spear handle
+        ctx.fillStyle='#aaa';ctx.fillRect(sx+3,sy+22,6,4); // spear tip
+      }else if(label==='King'){
+        // King: purple robe, crown
+        ctx.fillStyle='#5a1a6a';ctx.fillRect(sx+10,sy+14,20,16); // robe
+        ctx.fillStyle='#7a2a8a';ctx.fillRect(sx+12,sy+4,16,12); // head
+        ctx.fillStyle='#ffd700';ctx.fillRect(sx+12,sy+1,16,5); // crown
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+5,14,7); // face
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+7,3,3);ctx.fillRect(sx+22,sy+7,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+8,1,1);ctx.fillRect(sx+23,sy+8,1,1);
+        ctx.fillStyle='#ffd700';ctx.fillRect(sx+10,sy+14,20,3); // gold trim
+      }else if(label==='Aldric'){
+        // Aldric: violet robe, pointed hat
+        ctx.fillStyle='#6a2a7a';ctx.fillRect(sx+10,sy+14,20,16); // robe
+        ctx.fillStyle='#8a3a9a';ctx.fillRect(sx+11,sy+2,18,14); // hat (wide)
+        ctx.fillStyle='#8a3a9a';ctx.fillRect(sx+15,sy-4,10,8); // hat tip
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+6,14,7); // face (lower)
+        ctx.fillStyle='#aaa';ctx.fillRect(sx+17,sy-2,6,2); // hat brim
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+8,3,3);ctx.fillRect(sx+22,sy+8,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+9,1,1);ctx.fillRect(sx+23,sy+9,1,1);
+        ctx.fillStyle='#9a4aaa';ctx.fillRect(sx+10,sy+14,20,3); // belt
+      }else if(label==='Oroku'){
+        // Oroku: brown robes, sage
+        ctx.fillStyle='#6a5a3a';ctx.fillRect(sx+10,sy+14,20,16); // robe
+        ctx.fillStyle='#8a7a4a';ctx.fillRect(sx+12,sy+4,16,12); // head
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+5,14,7); // face
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+7,3,3);ctx.fillRect(sx+22,sy+7,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+8,1,1);ctx.fillRect(sx+23,sy+8,1,1);
+        ctx.fillStyle='#fff';ctx.fillRect(sx+13,sy+4,14,2); // grey hair
+        ctx.fillStyle='#5a4a2a';ctx.fillRect(sx+10,sy+14,20,3); // belt
+      }else if(label==='Brom'){
+        // Brom: simple brown tunic
+        ctx.fillStyle='#6a5a2a';ctx.fillRect(sx+10,sy+14,20,16); // tunic
+        ctx.fillStyle='#8a7a3a';ctx.fillRect(sx+12,sy+4,16,12); // head
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+5,14,7);
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+7,3,3);ctx.fillRect(sx+22,sy+7,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+8,1,1);ctx.fillRect(sx+23,sy+8,1,1);
+      }else if(label==='Lyra'){
+        // Lyra: apron over dress
+        ctx.fillStyle='#3a7a3a';ctx.fillRect(sx+10,sy+14,20,16); // dress
+        ctx.fillStyle='#fff';ctx.fillRect(sx+12,sy+16,16,12); // apron
+        ctx.fillStyle='#8a5a3a';ctx.fillRect(sx+12,sy+4,16,12); // hair
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+5,14,5); // face (offset for hair)
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+7,3,3);ctx.fillRect(sx+22,sy+7,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+8,1,1);ctx.fillRect(sx+23,sy+8,1,1);
+      }else if(label==='Fendrel'){
+        // Fendrel: green robe, merchant
+        ctx.fillStyle='#2a6a3a';ctx.fillRect(sx+10,sy+14,20,16); // robe
+        ctx.fillStyle='#3a8a4a';ctx.fillRect(sx+12,sy+4,16,12); // head
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+5,14,7);
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+7,3,3);ctx.fillRect(sx+22,sy+7,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+8,1,1);ctx.fillRect(sx+23,sy+8,1,1);
+        ctx.fillStyle='#c89030';ctx.fillRect(sx+10,sy+18,20,2); // gold trim
+        ctx.fillStyle='rgba(200,200,200,0.3)';ctx.fillRect(sx+12,sy+6,4,3); // glasses
+        ctx.fillRect(sx+18,sy+6,4,3);
+        ctx.fillStyle='rgba(200,200,200,0.3)';ctx.fillRect(sx+16,sy+7,2,1); // bridge
+      }else{
+        // Orin / generic: blue tunic
+        ctx.fillStyle='#3a5a8a';ctx.fillRect(sx+10,sy+14,20,16);
+        ctx.fillStyle='#4a7a9a';ctx.fillRect(sx+12,sy+4,16,12);
+        ctx.fillStyle='#e8c888';ctx.fillRect(sx+13,sy+5,14,7);
+        ctx.fillStyle='#fff';ctx.fillRect(sx+15,sy+7,3,3);ctx.fillRect(sx+22,sy+7,3,3);
+        ctx.fillStyle='#222';ctx.fillRect(sx+16,sy+8,1,1);ctx.fillRect(sx+23,sy+8,1,1);
+      }
+      // Label
+      ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(sx+2,sy-12,TILE-4,11);
+      ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(o.label,sx+20,sy-4);
+      // Interaction hint
+      if(Math.abs(o.x-player.px)<=1&&Math.abs(o.y-player.py)<=1){
+        ctx.fillStyle='rgba(0,255,100,0.5)';ctx.strokeStyle='#00e676';ctx.lineWidth=2;
+        ctx.strokeRect(sx-2,sy-2,TILE+4,TILE+4);
+      }
+    } else if (o.type === 'item') {
+      const sx=o.x*TILE, sy=o.y*TILE;
+      ctx.globalAlpha=0.6+Math.sin(Date.now()/300)*0.2;
+      ctx.font='28px serif';ctx.textAlign='center';ctx.fillText(o.icon||'📦',sx+20,sy+30);
+      ctx.globalAlpha=1;
+    } else if (o.type === 'door') {
+      const sx=o.x*TILE, sy=o.y*TILE;
+      const room = o.room||'';
+      let style='default';
+      if(o.label==='../') style='back';
+      else if(room.startsWith('/castle')) style='castle';
+      else if(room.startsWith('/village')) style='village';
+      else if(room.includes('cave')||room.startsWith('/forest')) style='cave';
+
+      if(style==='castle'){
+        // Stone archway
+        ctx.fillStyle='#5a4a3a';ctx.fillRect(sx+2,sy+2,TILE-4,TILE-4);
+        ctx.fillStyle='#6a5a4a';ctx.fillRect(sx+4,sy+4,TILE-8,TILE-8);
+        ctx.fillStyle='#3a2a1a';ctx.fillRect(sx+8,sy+8,TILE-16,TILE-16);
+        ctx.fillStyle='#7a6a5a';ctx.fillRect(sx+2,sy+2,TILE-4,4);
+        ctx.fillStyle='#7a6a5a';ctx.fillRect(sx+2,sy+34,4,4);
+        ctx.fillStyle='#7a6a5a';ctx.fillRect(sx+TILE-6,sy+34,4,4);
+        ctx.fillStyle='#7a6a5a';ctx.fillRect(sx+TILE-6,sy+2,4,4);
+        ctx.fillStyle='#4a3a2a';ctx.fillRect(sx+8,sy+TILE-10,TILE-16,4);
+        ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(sx+10,sy+8,TILE-20,TILE-24);
+        ctx.fillStyle='#c89030';ctx.beginPath();ctx.arc(sx+20,sy+30,3,0,Math.PI*2);ctx.fill();
+      }else if(style==='cave'){
+        // Cave opening
+        ctx.fillStyle='#3a3a2a';ctx.fillRect(sx+2,sy+2,TILE-4,TILE-4);
+        ctx.fillStyle='#2a2a1a';ctx.fillRect(sx+6,sy+6,TILE-12,TILE-12);
+        ctx.fillStyle='#1a1a0a';ctx.fillRect(sx+8,sy+8,TILE-16,TILE-16);
+        ctx.fillStyle='#4a3a2a';ctx.fillRect(sx,sy+4,8,6);ctx.fillRect(sx+TILE-8,sy+4,8,6);
+        ctx.fillStyle='#4a3a2a';ctx.fillRect(sx+2,sy+TILE-8,6,6);ctx.fillRect(sx+TILE-8,sy+TILE-8,6,6);
+        ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(sx+8,sy+8,TILE-16,TILE-20);
+      }else if(style==='village'){
+        // Wooden door
+        ctx.fillStyle='#5a3a1a';ctx.fillRect(sx+2,sy+2,TILE-4,TILE-4);
+        ctx.fillStyle='#6a4a2a';ctx.fillRect(sx+4,sy+4,TILE-8,TILE-8);
+        ctx.fillStyle='#7a5a3a';ctx.fillRect(sx+6,sy+6,TILE-12,TILE-12);
+        ctx.fillStyle='#8a6a3a';ctx.fillRect(sx+8,sy+8,4,TILE-16);
+        ctx.fillStyle='#8a6a3a';ctx.fillRect(sx+20,sy+8,4,TILE-16);
+        ctx.fillStyle='#8a6a3a';ctx.fillRect(sx+8,sy+8,TILE-16,4);
+        ctx.fillStyle='#c89030';ctx.beginPath();ctx.arc(sx+16,sy+20,2,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#c89030';ctx.beginPath();ctx.arc(sx+24,sy+20,2,0,Math.PI*2);ctx.fill();
+      }else if(style==='back'){
+        // Return door
+        ctx.fillStyle='#4a3a2a';ctx.fillRect(sx+4,sy+4,TILE-8,TILE-8);
+        ctx.fillStyle='#5a4a3a';ctx.fillRect(sx+6,sy+6,TILE-12,TILE-12);
+        ctx.fillStyle='#6a5a4a';ctx.fillRect(sx+8,sy+8,4,TILE-16);
+        ctx.fillStyle='#6a5a4a';ctx.fillRect(sx+20,sy+8,4,TILE-16);
+        ctx.fillStyle='rgba(180,230,255,0.3)';ctx.fillRect(sx+12,sy+10,TILE-24,TILE-20);
+        ctx.fillStyle='rgba(180,230,255,0.5)';ctx.font='14px serif';ctx.textAlign='center';
+        ctx.fillText('🔙',sx+20,sy+26);
+      }else{
+        // Default
+        ctx.fillStyle='rgba(100,200,255,0.15)';ctx.fillRect(sx,sy,TILE,TILE);
+        ctx.strokeStyle='rgba(100,200,255,0.4)';ctx.lineWidth=1;ctx.strokeRect(sx,sy,TILE,TILE);
+        ctx.fillStyle='rgba(100,200,255,0.7)';ctx.font='20px serif';ctx.textAlign='center';
+        ctx.fillText('🚪',sx+20,sy+28);
+      }
+      ctx.font='8px monospace';ctx.fillStyle='#64b5f6';
+      ctx.fillText(o.label.replace(/\//g,''),sx+20,sy+38);
+    } else if (o.type === 'enemy') {
+      const sx=o.x*TILE, sy=o.y*TILE;
+      if(o.hp>0){
+        const isBoss = o.label==='Goblin_Chief';
+        const bs = isBoss ? 1.6 : 1; // boss scale
+        const bx = sx + 20 - 20*bs/2, by = sy + 20 - 20*bs/2;
+        if(isBoss){
+          // Boss glow
+          ctx.fillStyle='rgba(255,0,0,0.08)';ctx.beginPath();ctx.arc(sx+20,sy+20,28,0,Math.PI*2);ctx.fill();
+          ctx.fillStyle='rgba(255,0,0,0.05)';ctx.beginPath();ctx.arc(sx+20,sy+20,36,0,Math.PI*2);ctx.fill();
+        }
+        // Shadow
+        ctx.fillStyle='rgba(0,0,0,0.3)';ctx.beginPath();ctx.ellipse(sx+20,sy+34,12*bs,5*bs,0,0,Math.PI*2);ctx.fill();
+        // Body
+        ctx.fillStyle=isBoss?'#5a3a1a':'#4a7a2a';ctx.fillRect(sx+20-10*bs,sy+20-6*bs,20*bs,16*bs);
+        ctx.fillStyle=isBoss?'#6a4a2a':'#4a7a2a';ctx.fillRect(sx+20-8*bs,sy+20-16*bs,16*bs,12*bs);
+        ctx.fillStyle=isBoss?'#8a5a3a':'#6a8a3a';ctx.fillRect(sx+20-7*bs,sy+20-15*bs,14*bs,7*bs);
+        // Eyes
+        ctx.fillStyle='#f44';ctx.fillRect(sx+20-6*bs,sy+20-13*bs,4*bs,4*bs);ctx.fillRect(sx+20+2*bs,sy+20-13*bs,4*bs,4*bs);
+        ctx.fillStyle='#600';ctx.fillRect(sx+20-4*bs,sy+20-17*bs,6*bs,4*bs);
+        if(isBoss){
+          // Boss horns
+          ctx.fillStyle='#3a2a1a';ctx.fillRect(sx+20-6*bs,sy+20-20*bs,2*bs,6*bs);
+          ctx.fillStyle='#3a2a1a';ctx.fillRect(sx+20+4*bs,sy+20-20*bs,2*bs,6*bs);
+          // Boss armor plates
+          ctx.fillStyle='#8a6a3a';ctx.fillRect(sx+20-10*bs,sy+20-2*bs,20*bs,2*bs);
+          ctx.fillStyle='#8a6a3a';ctx.fillRect(sx+20-11*bs,sy+20+6*bs,22*bs,2*bs);
+        }
+        // HP bar (boss gets wider bar)
+        const barW = isBoss ? TILE-4 : TILE-8;
+        ctx.fillStyle='#300';ctx.fillRect(sx+20-barW/2,sy-5,barW,5);
+        ctx.fillStyle='#e00';ctx.fillRect(sx+20-barW/2,sy-5,barW*o.hp/o.maxHp,5);
+        if(isBoss){
+          ctx.strokeStyle='#f44';ctx.lineWidth=1;ctx.strokeRect(sx+20-barW/2-1,sy-6,barW+2,7);
+        }
+        // Label
+        ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(sx+2,sy-16-isBoss*6,TILE-4,11+isBoss*6);
+        ctx.fillStyle=isBoss?'#ff4444':'#ff6b6b';ctx.font=isBoss?'11px monospace':'8px monospace';ctx.textAlign='center';
+        ctx.fillText(o.label,sx+20,sy-8-isBoss*6);
+        ctx.fillStyle=isBoss?'#ff4444':'#ff6b6b';ctx.font=isBoss?'9px monospace':'7px monospace';
+        ctx.fillText(`❤️${o.hp}`,sx+20,sy-1-isBoss*6);
+      }
+    }
+  }
+
+  // Hit effect overlays
+  function drawHit(eff){
+    if(!eff||eff.life<=0)return;
+    const hx=eff.x*TILE, hy=eff.y*TILE;
+    ctx.fillStyle=eff.color||'rgba(255,255,200,0.4)';ctx.fillRect(hx,hy,TILE,TILE);
+    ctx.strokeStyle=eff.border||'#fff';ctx.lineWidth=2;ctx.strokeRect(hx,hy,TILE,TILE);
+    eff.life--;
+  }
+  drawHit(hitEffect);if(hitEffect&&hitEffect.life<=0)hitEffect=null;
+  drawHit(playerHitEffect);if(playerHitEffect&&playerHitEffect.life<=0)playerHitEffect=null;
+
+  // Draw player
+  const px = player.px*TILE, py = player.py*TILE;
+  ctx.fillStyle='rgba(0,0,0,0.3)';ctx.beginPath();ctx.ellipse(px+20,py+34,12,5,0,0,Math.PI*2);ctx.fill();
+  if(player.armor){
+    // Armored player (silver/steel)
+    ctx.fillStyle='#8a9aaa';ctx.fillRect(px+10,py+14,20,16);
+    ctx.fillStyle='#9ab0c0';ctx.fillRect(px+12,py+4,16,12);
+    ctx.fillStyle='#b0c8d8';ctx.fillRect(px+10,py+14,20,4);
+    ctx.fillStyle='#b0c8d8';ctx.fillRect(px+10,py+26,20,4);
+    ctx.fillStyle='#e8c888';ctx.fillRect(px+13,py+5,14,7);
+    ctx.fillStyle='#fff';ctx.fillRect(px+15,py+7,3,3);ctx.fillRect(px+22,py+7,3,3);
+    ctx.fillStyle='#222';ctx.fillRect(px+16,py+8,1,1);ctx.fillRect(px+23,py+8,1,1);
+    ctx.fillStyle='#c0392b';ctx.fillRect(px+11,py+1,18,4);
+    ctx.fillStyle='#6a7a8a';ctx.fillRect(px+8,py+16,4,12);ctx.fillRect(px+28,py+16,4,12);
+  }else{
+    ctx.fillStyle='#3a7bd5';ctx.fillRect(px+10,py+14,20,16);
+    ctx.fillStyle='#3a7bd5';ctx.fillRect(px+12,py+4,16,12);
+    ctx.fillStyle='#e8c888';ctx.fillRect(px+13,py+5,14,7);
+    ctx.fillStyle='#fff';ctx.fillRect(px+15,py+7,3,3);ctx.fillRect(px+22,py+7,3,3);
+    ctx.fillStyle='#222';ctx.fillRect(px+16,py+8,1,1);ctx.fillRect(px+23,py+8,1,1);
+    ctx.fillStyle='#c0392b';ctx.fillRect(px+11,py+1,18,4);
+  }
+  // Direction indicator
+  ctx.fillStyle='rgba(0,255,100,0.3)';ctx.beginPath();
+  ctx.arc(px+20,py+22,22,0,Math.PI*2);ctx.strokeStyle='rgba(0,255,100,0.1)';ctx.lineWidth=1;ctx.stroke();
+  ctx.fillStyle='#00e676';ctx.font='9px monospace';ctx.textAlign='center';
+  ctx.fillText('🧙 tú',px+20,py+58);
+
+  // Darkness overlay for dark rooms
+  if(room.dark){
+    const vis = lanternOn ? 5 : 2.5;
+    const grad = ctx.createRadialGradient(px+20, py+20, 0, px+20, py+20, vis * TILE);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.4, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, 'rgba(0,0,0,1)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+// ─── COMMANDS ───
+const cmds = {};
+
+cmds.help = {desc:'Muestra esta ayuda',run:(args)=>{
+  const sorted = Object.entries(cmds).sort((a,b)=>a[0].localeCompare(b[0]));
+  tPrint('═══════════════════════════════════════','title');
+  tPrint('  📖 COMANDOS DISPONIBLES','title');
+  tPrint('═══════════════════════════════════════','title');
+  for(const[n,c]of sorted)tPrint(`  ${n.padEnd(16)}${c.desc}`,'help');
+  tPrint('═══════════════════════════════════════','title');
+  tPrint('💡 Usa man <comando> para más detalles.','info');
+}};
+
+cmds.man = {desc:'Muestra ayuda de un comando. Sin args, muestra todo.',run:(args)=>{
+  if(!args[0]) return cmds.help.run([]);
+  const c=cmds[args[0]];
+  if(!c)return tPrint(`man: ${args[0]}: no entry`,'err');
+  tPrint(`  ${args[0].toUpperCase()}(${1}) — ${c.desc}`,'help');
+  if(c.usage)tPrint(`  Uso: ${c.usage}`,'help');
+}};
+
+cmds.ls = {desc:'Lista elementos en la sala actual | ls -la ~/ para inventario',run:(args)=>{
+  const flags=args.filter(a=>a.startsWith('-'));
+  const paths=args.filter(a=>!a.startsWith('-'));
+  // ls -la ~/ or ls ~/ shows inventory
+  if(flags.includes('-la')||paths.some(p=>p==='~/'||p==='~')){
+    // Show inventory (home directory)
+    if(player.inventory.length===0)return tPrint('📂 ~/: (vacío)','info');
+    const ITEM_STYLES = {
+      'light_rod.txt':    {icon:'🔦',color:'#b388ff',name:'Vara de Luz',  cat:'Útiles',     desc:'Cristal brillante. Ilumina la oscuridad.'},
+      'iron_key.txt':     {icon:'🔑',color:'#ffab40',name:'Llave de Hierro',cat:'Útiles',  desc:'Oxidada pero funcional. Abre algo importante.'},
+      'bow.txt':          {icon:'🏹',color:'#8d6e63',name:'Arco Corto',   cat:'Equipo',     desc:'(+4 ATK) Fresno bien trabajado.'},
+      'shield.txt':       {icon:'🛡️',color:'#90a4ae',name:'Escudo de Acero',cat:'Equipo',   desc:'(+3 DEF) Emblema del halcón.'},
+      'potion.txt':       {icon:'🧪',color:'#ef5350',name:'Poción de Curación',cat:'Útiles',desc:'+40 HP. Usa "./potion" para beberla.'},
+      'leather_armor.txt':{icon:'🦺',color:'#8d6e63',name:'Armadura de Cuero',cat:'Equipo',desc:'(+2 DEF) Equípala con "./leather_armor".'},
+      'sword.txt':        {icon:'⚔️',color:'#90a4ae',name:'Espada de Acero',cat:'Equipo',  desc:'(+6 ATK) Equípala con "./sword".'},
+      'skill_power.txt':  {icon:'⚡',color:'#ffd740',name:'Power Strike',  cat:'Útiles',   desc:'Doble daño. En combate: "./power_strike".'},
+      'skill_heal.txt':   {icon:'💚',color:'#69f0ae',name:'Heal',         cat:'Útiles',   desc:'+30 HP. En combate: "./heal".'},
+    };
+    const catOrder = ['Equipo','Útiles','Otros'];
+    const grouped = {};
+    for(const i of player.inventory){
+      const s = ITEM_STYLES[i] || {icon:'📦',color:'#fff',name:i.replace('.txt',''),cat:'Otros',desc:''};
+      if(!grouped[s.cat]) grouped[s.cat] = [];
+      grouped[s.cat].push({label:i, style:s});
+    }
+    tPrint('total '+player.inventory.length,'help');
+    for(const cat of catOrder){
+      if(!grouped[cat]) continue;
+      for(const {label, style} of grouped[cat]){
+        const perms=cat==='Equipo'?'-rwx------':cat==='Útiles'?'-rw-r--r--':'-rw-rw-r--';
+        tPrint(`${perms}  ${style.name.padEnd(18)} ${style.desc||''}`,'out');
+      }
+    }
+    tPrint('','out');
+    tPrint(`💰  Oro: ${player.gold}       ⭐ Nv.${player.level}`,'out');
+    return;
+  }
+  const room=rooms[player.room];
+  if(!room)return tPrint('ls: error leyendo directorio','err');
+  const overlays=room.overlays||[];
+  const items=overlays.filter(o=>o.type==='item'||o.type==='npc'||o.type==='enemy'||o.type==='door');
+  if(items.length===0)return tPrint('📂 (sala vacía)','info');
+  for(const o of items){
+    if(o.type==='item'&&o.takeable===false) tPrint(`  📄  ${o.label}`,'out');
+    else if(o.type==='item'&&o.takeable) tPrint(`  📦  ${o.label}`,'out');
+    else if(o.type==='npc') tPrint(`  👤  ${o.label}`,'dlg');
+    else if(o.type==='enemy'&&o.hp>0) tPrint(`  ⚠️  ${o.label}  [HP:${o.hp} ATK:${o.atk} DEF:${o.def}]`,'combat');
+    else if(o.type==='door') tPrint(`  📁  ${o.label}`,'help');
+  }
+  tPrint('💡 Usa cat <nombre> para examinar.','dim');
+}};
+
+cmds.cat = {desc:'Examina un elemento o habla con un NPC',usage:'cat <nombre>',run:(args)=>{
+  if(!args[0])return tPrint('cat: falta argumento','err');
+  // Handle diary.txt (virtual file)
+  const fn=args[0].replace('~/','');
+  if(fn==='diario.txt'||fn==='diary'){
+    cmds.diary.run();
+    return;
+  }
+  if(fn==='profile'||fn==='profile.txt'){
+    cmds.profile.run();
+    return;
+  }
+  const target = findTarget(args[0]);
+  if(!target)return tPrint(`cat: ${args[0]}: No such file or directory`,'err');
+  // For NPCs/items, walk adjacent instead of on top
+  const dist = Math.abs(target.x - player.px) + Math.abs(target.y - player.py);
+  if (target.type !== 'door' && dist > 1 && !isMoving) {
+    return moveToTargetAdjacent(target.x, target.y, () => cmds.cat.run(args));
+  }
+  // For doors, walk to the exact tile
+  if (target.type === 'door' && (target.x !== player.px || target.y !== player.py) && !isMoving) {
+    return moveToTarget(target.x, target.y, () => cmds.cat.run(args));
+  }
+  if(target.type==='npc'){
+    tPrint(`👤 ${target.label}`,'dlg');
+    tPrint(`━━━━━━━━━━━━━━━━━━`,'dim');
+    const lines=bossDefeated&&target.dialogAfter?target.dialogAfter:target.dialog;
+    for(const line of lines||[])tPrint(`  ${line}`,'dlg');
+    if(target.onTalk){
+      const res=target.onTalk();
+      if(res)tPrint(res,'success');
+    }
+    // Oroku quiz
+    // Oroku quiz (only before boss defeat)
+    if(target.label==='Oroku'&&!bossDefeated)startQuiz();
+  }else if(target.type==='item'){
+    tPrint(target.desc||'📦 No description','lore');
+  }else if(target.type==='enemy'){
+    if(target.hp<=0)return tPrint(`cat: ${args[0]}: ya fue derrotado`,'err');
+    tPrint(`⚠️  ${target.label}`,'combat');
+    tPrint(`  HP: ${target.hp}/${target.maxHp}  ATK: ${target.atk}  DEF: ${target.def}`,'combat');
+    tPrint(`  ${target.dialog||''}`,'lore');
+    tPrint('💡 Usa "kill <PID>" (ps para ver PIDs) para combatir.','info');
+  }else if(target.type==='door'){
+    const cmd=target.label==='../'?'cd ..':`cd ${target.label}`;
+    tPrint(`🚪 ${target.desc||'Una puerta.'}`,'info');
+    tPrint(`💡 Usa "${cmd}" para entrar.`,'dim');
+  }
+}};
+
+cmds.cd = {desc:'Cambia de sala (como cd en Linux)',usage:'cd <ruta>',run:(args)=>{
+  if(!args[0])return tPrint('cd: falta argumento','err');
+  const target=args[0].toLowerCase().replace(/\/$/,'');
+  if(target==='..'){
+    const back=rooms[player.room]?.overlays.find(o=>o.type==='door'&&o.label==='../');
+    if(back&&back.room){
+      if ((back.x !== player.px || back.y !== player.py) && !isMoving)
+        return moveToTarget(back.x, back.y, () => cmds.cd.run(args));
+      goToRoom(back.room, back);
+    }else tPrint('cd: Ya estás en la raíz','warn');
+    return;
+  }
+  const room=rooms[player.room];
+  if(!room)return tPrint('cd: error interno','err');
+  const door=room.overlays.find(o=>o.type==='door'&&o.label.replace(/\/$/,'').toLowerCase()===target);
+  if(!door)return tPrint(`cd: ${args[0]}: No such directory`,'err');
+  if ((door.x !== player.px || door.y !== player.py) && !isMoving)
+    return moveToTarget(door.x, door.y, () => cmds.cd.run(args));
+  goToRoom(door.room, door);
+}};
+
+function findAdjacentWalkable(room, tx, ty) {
+  for(const[dx,dy] of [[0,-1],[0,1],[-1,0],[1,0]]){
+    const nx=tx+dx, ny=ty+dy;
+    if(nx<0||nx>=COLS||ny<0||ny>=ROWS)continue;
+    const tile=room.tiles[ny]?.[nx];
+    if(tile===undefined||tile==='skip')continue;
+    const isDoor=room.overlays.some(o=>o.type==='door'&&o.x===nx&&o.y===ny);
+    const occupied=room.overlays.some(o=>(o.type==='npc'||(o.type==='enemy'&&o.hp>0))&&o.x===nx&&o.y===ny);
+    if(occupied)continue;
+    if(isDoor||isWalkableTile(tile))return {x:nx,y:ny};
+  }
+  return null;
+}
+
+// ─── SAGE QUIZ ───
+function startQuiz(){
+  if(Date.now()<sageLockedUntil){
+    const mins=Math.ceil((sageLockedUntil-Date.now())/60000);
+    tPrint(`⏳ El Sabio está meditando. Vuelve en ${mins} minuto${mins!==1?'s':''}.`,'warn');
+    return;
+  }
+  // Pick 3 random questions
+  const shuffled=[...SAGE_QUESTIONS].sort(()=>Math.random()-0.5);
+  quizState={questions:shuffled.slice(0,3),current:0,correct:0};
+  gameState='quiz';
+  showQuizQuestion();
+}
+function showQuizQuestion(){
+  const qs=quizState;
+  if(qs.current>=qs.questions.length){
+    // All answered
+    if(qs.correct===3){
+      player.inventory.push('iron_key.txt');
+      tPrint('🎉  ¡Respondiste todo correctamente! El Sabio te entrega una llave misteriosa.','out');
+      tPrint('🔑  "Úsala con sabiduría. Abre lo que está cerrado."','dlg');
+    }else{
+      sageLockedUntil=Date.now()+60000;
+      tPrint(`⏳  ${MOTIVATIONAL[Math.floor(Math.random()*MOTIVATIONAL.length)]}`,'lore');
+      tPrint('El Sabio sonríe. "Vuelve en 1 minuto si quieres intentarlo de nuevo."','dlg');
+    }
+    quizState=null;gameState='idle';
+    cmdEl.focus();
+    return;
+  }
+  const q=qs.questions[qs.current];
+  tPrint(`\n📖  Pregunta ${qs.current+1} de ${qs.questions.length}:`,'lore');
+  tPrint(`  ${q.q}`,'help');
+  for(let i=0;i<q.o.length;i++)tPrint(`  ${i+1}) ${q.o[i]}`,'help');
+  tPrint('💡  Responde con 1, 2 o 3.','info');
+  cmdEl.focus();
+}
+function handleQuizAnswer(val){
+  const qs=quizState;
+  if(!qs)return;
+  const num=parseInt(val);
+  if(isNaN(num)||num<1||num>3){
+    tPrint('❌  Responde con 1, 2 o 3.','err');
+    return;
+  }
+  const q=qs.questions[qs.current];
+  if(num-1===q.a){
+    tPrint('✅  ¡Correcto!','success');
+    qs.correct++;
+  }else{
+    tPrint(`❌  Incorrecto. La respuesta era: ${q.o[q.a]}`,'err');
+    tPrint(`🍃  ${MOTIVATIONAL[Math.floor(Math.random()*MOTIVATIONAL.length)]}`,'lore');
+  }
+  qs.current++;
+  showQuizQuestion();
+}
+
+function victoryBoss(){
+  tPrint('','out');
+  tPrint('═══════════════════════════════════════','title');
+  tPrint('  👑 ¡HAS VENCIDO AL JEFE GOBBLIN!','title');
+  tPrint('═══════════════════════════════════════','title');
+  tPrint('','out');
+  tPrint('  El reino de Aetheria está a salvo.','lore');
+  tPrint('  La oscuridad se disipa...','lore');
+  tPrint('','out');
+  tPrint('  🎯  Pero tu viaje en Linux no termina aquí.','out');
+  tPrint('  💡  Sigue practicando:','help');
+  tPrint('     • Crea tus propios scripts en Bash','help');
+  tPrint('     • Administra servidores con SSH','help');
+  tPrint('     • Construye sistemas embebidos','help');
+  tPrint('     • ¡El conocimiento es poder!','help');
+  tPrint('','out');
+  tPrint('  "En Linux, como en la vida,','warn');
+  tPrint('   siempre hay un comando nuevo por aprender."','warn');
+  tPrint('═══════════════════════════════════════','title');
+  bossDefeated=true;
+  // Remove King from throne room, add him to root /
+  const throne=rooms['/castle/gate/throne_room'];
+  if(throne){
+    const idx=throne.overlays.findIndex(o=>o.type==='npc'&&o.label==='King');
+    if(idx>-1)throne.overlays.splice(idx,1);
+  }
+  const root=rooms['/'];
+  if(root&&!root.overlays.find(o=>o.type==='npc'&&o.label==='King')){
+    root.overlays.unshift({type:'npc',x:10,y:8,label:'King',desc:'👑 REY LEOVIGILDO\nEl Rey restaurado, con paso firme y mirada clara.',dialog:['¡Héroe! Has liberado el reino con tu dominio de Linux.','Tu viaje recién comienza. Sigue explorando, experimentando y aprendiendo.','El terminal es tan vasto como el conocimiento mismo. ¡Nunca dejes de estudiar!']});
+  }
+}
+function goToRoom(roomId, fromDoor){
+  const room=rooms[roomId];
+  if(!room)return tPrint(`cd: ${roomId}: Error interno`,'err');
+  // Dark cave requires light_rod.txt
+  if(room.dark && !player.inventory.includes('light_rod.txt')){
+    return tPrint('❌ Está demasiado oscuro. Necesitas una fuente de luz para entrar aquí.','err');
+  }
+  const prevRoom=player.room;
+  player.room=roomId;
+  // Respawn enemies (reset HP) but keep kill flags
+  room.overlays.forEach(o=>{if(o.type==='enemy')o.hp=o.maxHp;});
+  if(fromDoor){
+    // Find matching door in new room (door that leads back to previous room)
+    const returnDoor=room.overlays.find(o=>o.type==='door'&&o.room===prevRoom);
+    if(returnDoor){
+      const adj=findAdjacentWalkable(room, returnDoor.x, returnDoor.y);
+      if(adj){player.px=adj.x;player.py=adj.y;}
+      else{player.px=returnDoor.x;player.py=returnDoor.y;}
+    }else{
+      const spawn=room.overlays.find(o=>o.type==='player');
+      if(spawn){player.px=spawn.x;player.py=spawn.y;}
+      else{player.px=10;player.py=5;}
+    }
+  }else{
+    const spawn=room.overlays.find(o=>o.type==='player');
+    if(spawn){player.px=spawn.x;player.py=spawn.y;}
+    else{player.px=10;player.py=5;}
+  }
+  renderRoom();
+  updateHud();
+  updatePrompt();
+  clearHint();
+  tPrint(`📂 ${roomId}`,'info');
+  cmds.ls.run([]);
+}
+
+cmds.pwd = {desc:'Muestra la sala actual',run:()=>tPrint(player.room,'out')};
+
+cmds.whoami = {desc:'Muestra tu usuario (Linux whoami). También "cat ~/profile" para tu ficha.',run:()=>{
+  tPrint('guest','out');
+}};
+
+// Detailed profile via "cat ~/profile"
+cmds.profile = {desc:'Muestra la ficha del personaje',run:()=>{
+  tPrint('═══════════════════════','title');
+  tPrint('  👤  guest@aetheria','title');
+  tPrint('═══════════════════════','title');
+  tPrint(`  ❤️  HP:  ${player.hp}/${player.maxHp}`,'out');
+  tPrint(`  ⚔️  ATK: ${player.atk}`,'out');
+  tPrint(`  🛡️  DEF: ${player.def}`,'out');
+  tPrint(`  ⭐  Nv:  ${player.level} (XP: ${player.xp}/${player.xpNext})`,'out');
+  tPrint(`  💰  Oro: ${player.gold}`,'out');
+  tPrint(`  📍  ${player.room}`,'out');
+  if(player.skills.length){
+    tPrint(`  ⚡  Habilidades:`,'out');
+    for(const s of player.skills)tPrint(`      ${s.name} (${s.uses}/${s.maxUses})`,'help');
+  }
+}};
+
+cmds.cp = {desc:'Copia un item a tu inventario (Linux cp)',usage:'cp <item> [~/]',run:(args)=>{
+  if(!args[0])return tPrint('cp: falta argumento','err');
+  const target = findTarget(args[0]);
+  if(!target || target.type!=='item' || !target.takeable){
+    const exists = findTarget(args[0]);
+    if(exists&&exists.type==='item'&&!exists.takeable)
+      return tPrint(`cp: ${args[0]}: no se puede copiar este objeto`,'err');
+    return tPrint(`cp: ${args[0]}: No such file or directory`,'err');
+  }
+  if ((target.x !== player.px || target.y !== player.py) && !isMoving)
+    return moveToTarget(target.x, target.y, () => cmds.cp.run(args));
+  let success=true;
+  if(target.onTake){
+    const res=target.onTake();
+    if(res){
+      if(Array.isArray(res)){tPrintMany([res]);if(res[1]==='err')success=false;}
+      else tPrint(res,'out');
+    }
+  }else{
+    player.inventory.push(target.label);
+    diaryAdd('cp <item> ~/', 'Copia un item del suelo a tu inventario. Ej: cp shield.txt ~/');
+    tPrint(`✅ Copiado: ${target.label}`,'out');
+  }
+  updateHud();
+  if(success){
+    const idx=rooms[player.room].overlays.indexOf(target);
+    if(idx>-1)rooms[player.room].overlays.splice(idx,1);
+  }
+  renderRoom();
+}};
+
+cmds.ps = {desc:'Muestra enemigos como procesos con PID',run:()=>{
+  const room=rooms[player.room];
+  if(!room)return tPrint('ps: error interno','err');
+  const enemies=room.overlays.filter(o=>o.type==='enemy'&&o.hp>0);
+  if(!enemies.length)return tPrint('ps: No hay procesos enemigos en esta sala.','info');
+  tPrint('PID    NAME            HP    ATK   DEF','help');
+  tPrint('────  ─────────────  ────  ────  ────','dim');
+  for(let i=0;i<room.overlays.length;i++){
+    const o=room.overlays[i];
+    if(o.type==='enemy'&&o.hp>0){
+      const pid=o._uid;
+      tPrint(`${pid}  ${o.label.padEnd(15)} ${String(o.hp).padStart(4)} ${String(o.atk).padStart(4)} ${String(o.def).padStart(4)}`,'out');
+    }
+  }
+  tPrint('','out');
+  tPrint('💡 Usa "kill <PID>" para atacar un enemigo. O presiona ESPACIO en combate.','dim');
+  diaryAdd('kill <PID>', 'Ataca a un enemigo por su PID. Ej: kill 1001. O presiona ESPACIO en combate.');
+}};
+
+cmds.kill = {desc:'Ataca a un enemigo por PID (o inicia combate)',usage:'kill <PID>',run:(args)=>{
+  const room=rooms[player.room];
+  if(!room)return tPrint('kill: error interno','err');
+  if(!args[0])return tPrint('kill: falta argumento. Usa "ps" para ver los PIDs.','err');
+  const pid=parseInt(args[0]);
+  if(isNaN(pid))return tPrint(`kill: ${args[0]}: not a process`,'err');
+  let targetEnemy=null;
+  for(let i=0;i<room.overlays.length;i++){
+    if(room.overlays[i].type==='enemy'&&room.overlays[i].hp>0&&room.overlays[i]._uid===pid){
+      targetEnemy=room.overlays[i];break;
+    }
+  }
+  if(!targetEnemy)return tPrint(`kill: ${pid}: no such process`,'err');
+  // If already in battle with this enemy, do a battle turn
+  if(gameState==='battle'&&battleEnemy===targetEnemy){
+    battleTurn();
+    return;
+  }
+  if(gameState==='battle')return tPrint('kill: Ya estás en combate con otro enemigo. Usa "disown" para huir.','warn');
+  // Start battle
+  const dist=Math.abs(targetEnemy.x-player.px)+Math.abs(targetEnemy.y-player.py);
+  if(dist>1&&!isMoving)
+    return moveToTargetAdjacent(targetEnemy.x, targetEnemy.y, () => cmds.kill.run(args));
+  gameState='battle';
+  battleEnemy=targetEnemy;
+  diaryAdd('ps', 'Muestra los enemigos en la sala como procesos con PID.');
+  diaryAdd('kill <PID>', 'Ataca a un enemigo por su PID. Ej: kill 1001.');
+  tPrint(`⚔️  ¡${targetEnemy.label} aparece!`,'combat');
+  tPrint(`  ${targetEnemy.dialog||''}`,'lore');
+  tPrint(`  HP:${targetEnemy.hp}/${targetEnemy.maxHp}  ATK:${targetEnemy.atk}  DEF:${targetEnemy.def}`,'combat');
+  if(targetEnemy.requires==='forest'&&player.atk<16){
+    tPrint(`⚠️  Sin un arco (🏹 bow.txt, +4 atk) será muy difícil vencerlo.`,'warn');
+  }
+  // Show available combat skills/items
+  const skillList=player.skills.map(s=>'./'+s.name.replace(/ /g,'_')).join(' ');
+  const potion=player.inventory.includes('potion.txt')?' ./potion':'';
+  if(skillList||potion)tPrint(`💡 Usa: ${skillList}${potion}`,'info');
+  tPrint('══════════════════════════════','dim');
+  tPrint('Presiona ESPACIO para atacar, escribe "disown" para huir.','info');
+  cmdEl.focus();
+}};
+
+cmds.disown = {desc:'Huye del combate (Linux disown)',run:()=>{
+  if(gameState!=='battle'||!battleEnemy)return tPrint('disown: No hay proceso en combate.','err');
+  if(battleEnemy){battleEnemy.hp=battleEnemy.maxHp;battleEnemy=null;}
+  gameState='idle';
+  tPrint('💨  disown: proceso desvinculado. Has huido del combate.','warn');
+  cmdEl.focus();
+}};
+
+// Inventory shown via "ls -la ~/" (handled inside cmds.ls)
+
+cmds.clear = {desc:'Limpia la terminal',run:()=>{termEl.innerHTML='';hintEl=null;}};
+cmds.echo = {desc:'Repite el texto',run:(args)=>tPrint(args.join(' '),'out')};
+cmds.diary = {desc:'Muestra tu diario de comandos aprendidos',run:()=>{
+  if(!diary.length)return tPrint('📓  No has aprendido ningún comando aún.','info');
+  tPrint('═════  📓 DIARIO DE COMANDOS  ═════','title');
+  for(const e of diary)
+    tPrint(`  ${e.cmd.padEnd(20)} → ${e.explanation}`,'out');
+  tPrint('════════════════════════════════','title');
+  tPrint('💡  También puedes usar "cat diario.txt" o "cat ~/diario.txt"','dim');
+}};
+
+cmds.save = {desc:'Guarda la partida (localStorage)',run:()=>{
+  const data={player:{...player,room:player.room},rooms:{}};
+  for(const[k,v]of Object.entries(rooms)){
+    data.rooms[k]={overlays:v.overlays.map(o=>({...o}))};
+  }
+  localStorage.setItem('aetheria_save2',JSON.stringify(data));
+  tPrint('💾 Partida guardada.','out');
+}};
+
+cmds.load = {desc:'Carga la partida',run:()=>{
+  try{
+    const raw=localStorage.getItem('aetheria_save2');
+    if(!raw)return tPrint('❌ No hay partida guardada.','err');
+    const data=JSON.parse(raw);
+    Object.assign(player,data.player);
+    for(const[k,v]of Object.entries(data.rooms)){
+      if(rooms[k])rooms[k].overlays=v.overlays;
+    }
+    goToRoom(player.room);
+    tPrint('💾 Partida cargada.','out');
+  }catch(e){tPrint('❌ Error: '+e.message,'err');}
+}};
+
+cmds.quest = {desc:'Muestra tu misión actual y pistas',run:()=>{
+  tPrint('━━━ 📜 MISIÓN PRINCIPAL ━━━','title');
+  if(!player.inventory.includes('iron_key.txt')&&!player.armor){
+    tPrint('  🎯 1. Consigue equipo y oro','out');
+    tPrint('     • Mata goblins en /castle y /forest (ps → kill <PID>)','help');
+    tPrint('     • cp bow.txt ~/ (+4 atk) y cp leather_armor ~/ (+2 def) en shop','help');
+    tPrint('  🎯 2. Habla con Oroku en /forest (cat Oroku)','out');
+    tPrint('     • Responde 3 preguntas de Linux correctamente','help');
+    tPrint('     • Te dará una llave misteriosa','help');
+    tPrint('  🎯 3. Usa la llave en /castle (./cofre o cat cofre)','out');
+    tPrint('     • Recibirás la armadura de acero legendaria','help');
+    tPrint('  🌟 Opcional: Explora la cueva oscura en /forest','out');
+    tPrint('     • Habla con Aldric (cat Aldric) para la Vara de Luz','help');
+    tPrint('     • Luego "./light_rod" para iluminar','help');
+  }else if(player.armor){
+    tPrint('  🎯 4. Derrota al JEFE GOBBLIN en /forest','out');
+    tPrint('     • Está en lo profundo del bosque (cave/deep/)','help');
+    tPrint('     • Tienes toda la armadura. ¡Es tu destino!','help');
+  }else if(player.inventory.includes('iron_key.txt')){
+    tPrint('  🎯 3. Usa la llave en /castle (./cofre)','out');
+    tPrint('     • El cofre está en la sala principal','help');
+  }
+  tPrint('━━━━━━━━━━━━━━━━━━━━━━━','title');
+  tPrint('💡 "man <comando>" para ayuda de cada comando.','info');
+}};
+cmds.quit = {desc:'Salir del juego',run:()=>{
+  tPrint('═══════════════════════════════════','title');
+  tPrint('  🌸  Gracias por jugar Aetheria.','title');
+  tPrint('  El reino te recordará, aventurero.','title');
+  tPrint('═══════════════════════════════════','title');
+}};
+
+// ─── BATTLE SYSTEM ───
+function battleTurn() {
+  if(!battleEnemy||battleEnemy.hp<=0){gameState='idle';battleEnemy=null;return;}
+  const e=battleEnemy;
+  // Track turn count for boss
+  if(e.turnCount===undefined)e.turnCount=0;
+  e.turnCount++;
+  // Player attacks
+  const dmg=Math.max(1,player.atk-e.def+Math.floor(Math.random()*4));
+  e.hp=Math.max(0,e.hp-dmg);
+  tPrint(`⚔️  Atacas por ${dmg} daño.  ${e.label}: ${e.hp}/${e.maxHp} HP`,'combat');
+  // Hit effect animation
+  hitEffect={x:e.x,y:e.y,life:6,color:'rgba(255,255,200,0.5)',border:'#ff0'};
+  if(e.hp<=0){
+    player.xp+=e.xp||10;
+    const eid=e._uid;
+    const already=rewardedEnemies.has(eid);
+    if(!already){player.gold+=e.gold||5;rewardedEnemies.add(eid);}
+    if(e.label==='Goblin_Chief'){
+      victoryBoss();
+    }else{
+      const eid=e._uid;
+      const reward=already?`🏆  ¡${e.label} derrotado! +${e.xp||10} XP (sin oro, ya derrotado antes)`:`🏆  ¡${e.label} derrotado! +${e.xp||10} XP +${e.gold||5} Oro`;
+      tPrint(reward,'success');
+    }
+    player.kills++;
+    checkLevelUp();
+    renderRoom();
+    gameState='idle';battleEnemy=null;
+    updateHud();
+    return;
+  }
+  // Enemy attacks (boss has Mighty Blow every 3 turns)
+  const isBoss=e.label==='Goblin_Chief';
+  const isMighty=isBoss&&e.turnCount%3===0;
+  const edmg=Math.max(1,(isMighty?e.atk*2:e.atk)-player.def+Math.floor(Math.random()*3));
+  player.hp=Math.max(0,player.hp-edmg);
+  if(isMighty)tPrint(`💥💥  ¡${e.label} usa MIGHTY BLOW! ${edmg} daño.  Tu HP: ${player.hp}/${player.maxHp}`,'combat');
+  else tPrint(`💥  ${e.label} te ataca por ${edmg} daño.  Tu HP: ${player.hp}/${player.maxHp}`,'combat');
+  // Player hit effect
+  playerHitEffect={x:player.px,y:player.py,life:5,color:'rgba(255,100,100,0.4)',border:'#f44'};
+  renderRoom();
+  updateHud();
+  if(player.hp<=0){
+    tPrint('💀  Has muerto...','err');
+    tPrint('  Pero el destino te da otra oportunidad.','warn');
+    player.hp=Math.floor(player.maxHp/2);
+    player.gold=Math.floor(player.gold/2);
+    // Reset enemy HP so the fight starts fresh
+    if(battleEnemy)battleEnemy.hp=battleEnemy.maxHp;
+    // Move player to room spawn
+    const spawn=rooms[player.room]?.overlays.find(o=>o.type==='player');
+    if(spawn){player.px=spawn.x;player.py=spawn.y;}
+    gameState='idle';battleEnemy=null;
+    updateHud();
+    renderRoom();
+      tPrint('💡  El enemigo se ha recuperado. Usa "kill <PID>" para intentar de nuevo.','info');
+    return;
+  }
+  // Show enemy HP bar on map
+  renderRoom();
+  if(isBoss&&e.hp<e.maxHp*0.3)tPrint('⚠️  El Jefe Goblin está furioso... prepárate para su Mighty Blow.','warn');
+      tPrint('Presiona ESPACIO para atacar de nuevo, o escribe "disown".','info');
+}
+
+function checkLevelUp() {
+  while(player.xp>=player.xpNext){
+    player.xp-=player.xpNext;
+    player.level++;
+    player.xpNext=Math.floor(player.xpNext*1.5);
+    player.maxHp+=15;player.hp+=15;
+    player.atk+=2;player.def+=1;
+    tPrint(`⭐  ¡SUBISTE AL NIVEL ${player.level}!`,'title');
+  }
+}
+
+// ─── INPUT ───
+// Arrow keys: move when input empty, history when typing
+document.addEventListener('keydown', e => {
+  if (gameState !== 'idle') return;
+  if (document.activeElement === cmdEl && cmdEl.value.length > 0) return;
+  switch(e.key) {
+    case 'ArrowUp': e.preventDefault(); tryMove(0, -1); break;
+    case 'ArrowDown': e.preventDefault(); tryMove(0, 1); break;
+    case 'ArrowLeft': e.preventDefault(); tryMove(-1, 0); break;
+    case 'ArrowRight': e.preventDefault(); tryMove(1, 0); break;
+  }
+});
+
+cmdEl.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){
+    clearHint();
+    e.preventDefault();
+    const val=cmdEl.value.trim();
+    cmdEl.value='';
+    if(!val)return;
+
+    // Quiz mode: only numbers
+    if(gameState==='quiz'){handleQuizAnswer(val);return;}
+
+    // If in battle and not fleeing, space triggers attack
+    if(gameState==='battle'&&battleEnemy){
+      const parts=val.match(/(?:[^\s"]+|"[^"]*")+/g)||[];
+      const cmd=parts[0].toLowerCase();
+      const handler=cmds[cmd];
+      // Allow utility commands in battle
+      if(handler&&['disown','help','clear','save','load','diary','ls','cat','whoami','ps'].includes(cmd)){
+        tPrint(`guest@aetheria:${player.room}$ ${val}`,'cmd');
+        history.push(val);histIdx=history.length;
+        handler.run(parts.slice(1));
+        return;
+      }
+      // ./ in battle: skills + inventory items
+      if(cmd.startsWith('./')){
+        tPrint(`guest@aetheria:${player.room}$ ${val}`,'cmd');
+        history.push(val);histIdx=history.length;
+        const exe=cmd.slice(2);
+        // Check skills
+        const skill=player.skills.find(s=>s.name.toLowerCase()===exe.toLowerCase()||s.name.toLowerCase().replace(/ /g,'_')===exe.toLowerCase());
+        if(skill){
+          if(skill.uses<=0)return tPrint(`bash: ./${exe}: no te quedan usos para esta batalla`,'err');
+          skill.uses--;
+          if(skill.name==='Power Strike'){
+            const dmg=Math.max(1,player.atk*2-battleEnemy.def+Math.floor(Math.random()*4));
+            battleEnemy.hp=Math.max(0,battleEnemy.hp-dmg);
+            tPrint(`⚡ Power Strike! ${dmg} daño! ${battleEnemy.label}: ${battleEnemy.hp}/${battleEnemy.maxHp}`,'combat');
+            if(battleEnemy.hp<=0){
+              player.xp+=battleEnemy.xp||10;
+              const eid2=battleEnemy._uid;
+              const already2=rewardedEnemies.has(eid2);
+              if(!already2){player.gold+=battleEnemy.gold||5;rewardedEnemies.add(eid2);}
+              if(battleEnemy.label==='Goblin_Chief')victoryBoss();else tPrint(`🏆 ${battleEnemy.label} derrotado!`,'success');
+              player.kills++;checkLevelUp();renderRoom();gameState='idle';battleEnemy=null;updateHud();
+            }else{
+              const edmg=Math.max(1,battleEnemy.atk-player.def+Math.floor(Math.random()*3));
+              player.hp=Math.max(0,player.hp-edmg);tPrint(`💥 ${battleEnemy.label} te ataca por ${edmg} daño.`,'combat');updateHud();
+              if(player.hp<=0){
+                player.hp=Math.floor(player.maxHp/2);player.gold=Math.floor(player.gold/2);
+                if(battleEnemy)battleEnemy.hp=battleEnemy.maxHp;
+                const sp=rooms[player.room]?.overlays.find(o=>o.type==='player');if(sp){player.px=sp.x;player.py=sp.y;}
+                gameState='idle';battleEnemy=null;updateHud();renderRoom();
+                tPrint('💡 Usa "kill <PID>" para intentar de nuevo.','info');
+              }else{renderRoom();tPrint('Presiona ESPACIO o escribe "disown".','info');}
+            }
+          }else if(skill.name==='Heal'){
+            const healed=Math.min(30,player.maxHp-player.hp);player.hp+=healed;
+            tPrint(`💚 Heal! +${healed} HP (${player.hp}/${player.maxHp})`,'combat');updateHud();renderRoom();
+            tPrint('Presiona ESPACIO o escribe "disown".','info');
+          }
+          return;
+        }
+        // Check inventory items (potion) in combat
+        if(player.inventory.find(i=>i.startsWith(exe))){
+          if(exe==='potion'||exe==='potion.txt'){
+            if(!player.inventory.includes('potion.txt'))return tPrint('bash: ./potion: no tienes ninguna poción','err');
+            const healed=Math.min(40,player.maxHp-player.hp);
+            player.hp+=healed;
+            player.inventory=player.inventory.filter(i=>i!=='potion.txt');
+            tPrint(`🧪 Bebes la poción. +${healed} HP (${player.hp}/${player.maxHp})`,'success');
+            updateHud();renderRoom();
+            tPrint('Presiona ESPACIO para atacar de nuevo, o escribe "disown".','info');
+            return;
+          }
+          return tPrint(`bash: ./${exe}: no puedes usar eso en combate`,'err');
+        }
+        // Show available skills/items
+        const skillNames=player.skills.map(s=>s.name).join(', ');
+        const items=player.inventory.filter(i=>i==='potion.txt').map(i=>i.replace('.txt','')).join(', ');
+        let hint='bash: ./'+exe+': No such file or directory';
+        if(skillNames||items)hint+='\n💡 Disponibles:';
+        if(skillNames)hint+='\n   Habilidades: ./'+skillNames.replace(/ /g,'_').split(', ').join(', ./');
+        if(items)hint+='\n   Items: ./'+items;
+        return tPrint(hint,'err');
+      }
+      // Otherwise, process as battle command
+      if(cmd==='kill'||val===''){
+        tPrint(`guest@aetheria:${player.room}$ ${val||'(ESPACIO)'}`,'cmd');
+        if(val)history.push(val);histIdx=history.length;
+        if(cmd==='kill')cmds.kill.run(parts.slice(1));
+        else battleTurn();
+        return;
+      }
+      tPrint(`guest@aetheria:${player.room}$ ${val}`,'cmd');
+      tPrint(`bash: ${cmd}: command not found (estás en combate — escribe "kill <PID>", "disown", o presiona ESPACIO)`,'err');
+      return;
+    }
+
+    history.push(val);
+    histIdx=history.length;
+    tPrint(`guest@aetheria:${player.room}$ ${val}`,'cmd');
+
+    const parts=val.match(/(?:[^\s"]+|"[^"]*")+/g)||[];
+    const cmd=parts[0].toLowerCase();
+    const args=parts.slice(1).map(a=>a.replace(/^"|"$/g,''));
+
+    const handler=cmds[cmd];
+    if(!handler){
+      // Check if it's an executable file (./something)
+      if(cmd.startsWith('./')){
+        const exe=cmd.slice(2);
+        // Check skills
+        const skill=player.skills.find(s=>s.name.toLowerCase()===exe.toLowerCase()||s.name.toLowerCase().replace(/ /g,'_')===exe.toLowerCase());
+        if(skill){
+          if(skill.uses<=0)return tPrint(`bash: ./${exe}: no te quedan usos para esta batalla`,'err');
+          if(gameState!=='battle')return tPrint(`bash: ./${exe}: solo puedes usarlo en combate`,'err');
+          skill.uses--;
+          if(skill.name==='Power Strike'){
+            const dmg=Math.max(1,player.atk*2-battleEnemy.def+Math.floor(Math.random()*4));
+            battleEnemy.hp=Math.max(0,battleEnemy.hp-dmg);
+            tPrint(`⚡ Power Strike! ${dmg} de daño!  ${battleEnemy.label}: ${battleEnemy.hp}/${battleEnemy.maxHp}`,'combat');
+            if(battleEnemy.hp<=0){
+              player.xp+=battleEnemy.xp||10;
+              const eid3=battleEnemy._uid;
+              const already3=rewardedEnemies.has(eid3);
+              if(!already3){player.gold+=battleEnemy.gold||5;rewardedEnemies.add(eid3);}
+              if(battleEnemy.label==='Goblin_Chief')victoryBoss();
+              else {
+                const reward=already3?`+${battleEnemy.xp||10} XP (sin oro, ya derrotado antes)`:`🏆  ¡${battleEnemy.label} derrotado! +${battleEnemy.xp||10} XP +${battleEnemy.gold||5} Oro`;
+                tPrint(reward,'success');
+              }
+              player.kills++;checkLevelUp();renderRoom();gameState='idle';battleEnemy=null;updateHud();
+            }else{
+              const edmg=Math.max(1,battleEnemy.atk-player.def+Math.floor(Math.random()*3));
+              player.hp=Math.max(0,player.hp-edmg);
+              tPrint(`💥  ${battleEnemy.label} te ataca por ${edmg} daño.  Tu HP: ${player.hp}/${player.maxHp}`,'combat');
+              updateHud();
+              if(player.hp<=0){
+                tPrint('💀  Has muerto...','err');tPrint('  Pero el destino te da otra oportunidad.','warn');
+                player.hp=Math.floor(player.maxHp/2);player.gold=Math.floor(player.gold/2);
+                if(battleEnemy)battleEnemy.hp=battleEnemy.maxHp;
+                const spawn=rooms[player.room]?.overlays.find(o=>o.type==='player');
+                if(spawn){player.px=spawn.x;player.py=spawn.y;}
+                gameState='idle';battleEnemy=null;updateHud();renderRoom();
+                tPrint('💡  El enemigo se ha recuperado. Usa "kill <PID>" para intentar de nuevo.','info');
+              }else{
+                renderRoom();
+                tPrint('Presiona ESPACIO para atacar de nuevo, o escribe "disown".','info');
+              }
+            }
+          }else if(skill.name==='Heal'){
+            const healed=Math.min(30,player.maxHp-player.hp);
+            player.hp+=healed;
+            tPrint(`💚 Heal! +${healed} HP (${player.hp}/${player.maxHp})`,'combat');
+            updateHud();renderRoom();
+            tPrint('Presiona ESPACIO para atacar de nuevo, o escribe "disown".','info');
+          }
+          return;
+        }
+        // Check inventory executables
+        const exeFile=player.inventory.find(i=>i.startsWith(exe));
+        if(exeFile){
+          if(exe==='light_rod'||exe==='light_rod.txt'){
+            lanternOn=!lanternOn;renderRoom();
+            if(lanternOn) tPrint('🔦 Enciendes la Vara de Luz. La oscuridad se disipa.','success');
+            else tPrint('🔦 Apagas la Vara de Luz.','dim');
+          }else if(exe==='potion'||exe==='potion.txt'){
+            if(!player.inventory.includes('potion.txt'))return tPrint('bash: ./potion: no tienes ninguna poción','err');
+            const healed=Math.min(40,player.maxHp-player.hp);
+            player.hp+=healed;
+            player.inventory=player.inventory.filter(i=>i!=='potion.txt');
+            tPrint(`🧪 Bebes la poción. +${healed} HP (${player.hp}/${player.maxHp})`,'success');
+            updateHud();
+          }else if(exe==='leather_armor'||exe==='leather_armor.txt'){
+            if(!player.inventory.includes('leather_armor.txt'))return tPrint('bash: ./leather_armor: no tienes armadura de cuero','err');
+            player.inventory=player.inventory.filter(i=>i!=='leather_armor.txt');
+            player.def+=2;
+            tPrint('🦺 Armadura de Cuero equipada. Defensa +2.','success');
+            updateHud();
+          }else if(exe==='sword'||exe==='sword.txt'){
+            if(!player.inventory.includes('sword.txt'))return tPrint('bash: ./sword: no tienes espada de acero','err');
+            player.inventory=player.inventory.filter(i=>i!=='sword.txt');
+            player.atk+=6;
+            tPrint('⚔️ Espada de Acero equipada. Ataque +6.','success');
+            updateHud();
+          }else{
+            tPrint(`bash: ./${exe}: ejecutado. (sin efecto)`,'out');
+          }
+          return;
+        }
+        // Check room items with useAction
+        const roomTarget=findTarget(exe);
+        if(roomTarget&&roomTarget.usable){
+          if ((roomTarget.x !== player.px || roomTarget.y !== player.py) && !isMoving){
+            return moveToTarget(roomTarget.x, roomTarget.y, () => {
+              const parts=('./'+exe).match(/(?:[^\s"]+|"[^"]*")+/g)||[];
+              const cmd2=parts[0];
+              // Re-run via global dispatch
+              // We're already in the dispatch after walking, so execute directly
+              if(roomTarget.useAction){
+                const res=roomTarget.useAction();
+                if(Array.isArray(res))tPrintMany([res]);else tPrint(res,'out');
+                updateHud();
+              }
+            });
+          }
+          if(roomTarget.useAction){
+            const res=roomTarget.useAction();
+            if(Array.isArray(res))tPrintMany([res]);else tPrint(res,'out');
+            updateHud();
+          }
+          return;
+        }
+        tPrint(`bash: ./${exe}: No such file or directory`,'err');
+        return;
+      }
+      tPrint(`bash: ${cmd}: command not found. Escribe "help".`,'err');
+      return;
+    }
+    handler.run(args);
+    updatePrompt();
+  }
+  // History navigation (solo cuando hay texto escrito)
+  else if(e.key==='ArrowUp' && cmdEl.value.length > 0){
+    e.preventDefault();
+    if(history.length===0)return;
+    if(histIdx>0){histIdx--;cmdEl.value=history[histIdx];}
+  }else if(e.key==='ArrowDown' && cmdEl.value.length > 0){
+    e.preventDefault();
+    if(histIdx<history.length-1){histIdx++;cmdEl.value=history[histIdx];}
+    else{histIdx=history.length;cmdEl.value='';}
+  }else if(e.key==='l'&&e.ctrlKey){e.preventDefault();cmds.clear.run();}
+  // Tab completion
+  else if(e.key==='Tab'){
+    e.preventDefault();
+    const val=cmdEl.value;
+    const parts=val.match(/(?:[^\s"]+|"[^"]*")+/g)||[];
+    const room=rooms[player.room];
+    if(!room)return;
+    if(parts.length===0||!parts[parts.length-1]){
+      // Show all interactables in the room
+      const items=room.overlays.filter(o=>o.type==='item'||o.type==='npc'||o.type==='enemy'||o.type==='door').map(o=>o.label);
+      if(items.length)tPrintMany(items.map(c=>['  '+c,'help']));
+      return;
+    }
+    const partial=parts[parts.length-1].toLowerCase();
+    if(!partial)return;
+    const candidates=room.overlays.filter(o=>{
+      const label=(o.label||'').toLowerCase();
+      return label.startsWith(partial) || label.replace('.txt','').startsWith(partial);
+    }).map(o=>o.label);
+    if(candidates.length===0)return;
+    if(candidates.length===1){
+      const last=parts.pop();
+      const prefix=val.slice(0,val.length-last.length);
+      cmdEl.value=prefix+candidates[0];
+    }else{
+      tPrintMany(candidates.map(c=>['  '+c,'help']));
+    }
+  }
+  // Space during battle
+  else if(e.key===' '&&gameState==='battle'&&battleEnemy&&cmdEl.value.length===0){
+    e.preventDefault();
+    tPrint(`guest@aetheria:${player.room}$ (ESPACIO)`,'cmd');
+    battleTurn();
+  }
+});
+
+// ─── INIT ───
+function boot() {
+  initWorld();
+  // Assign unique IDs to every enemy
+  let eid=1;
+  for(const k in rooms)for(const o of rooms[k].overlays)if(o.type==='enemy')o._uid=eid++;
+  player.room='/';
+  const spawn=rooms['/'].overlays.find(o=>o.type==='player');
+  if(spawn){player.px=spawn.x;player.py=spawn.y;}
+
+  // Seed diary with basic commands
+  diaryAdd('ls', 'Lista los elementos (items, NPCs, enemigos, puertas) en la sala.');
+  diaryAdd('cd <puerta>', 'Cambia de sala. Ej: cd castle/, cd forest/, cd ..');
+  diaryAdd('cat <nombre>', 'Examina o habla con un NPC/item/enemigo. Ej: cat Guard, cat shield.txt');
+  diaryAdd('cp <item> ~/', 'Copia un item del suelo a tu inventario. Ej: cp shield.txt ~/');
+  diaryAdd('echo "texto" > archivo', 'Escribe texto en un archivo. Ej: echo "hola" > notas.txt');
+  diaryAdd('pwd', 'Muestra la sala actual.');
+  diaryAdd('clear', 'Limpia la terminal.');
+  diaryAdd('man <comando>', 'Muestra ayuda de un comando. Ej: man cp');
+  diaryAdd('ps', 'Muestra los enemigos en la sala como procesos con PID.');
+  diaryAdd('kill <PID>', 'Ataca a un enemigo por su PID. Ej: kill 1001.');
+  diaryAdd('disown', 'Huye del combate (desvincula el proceso enemigo).');
+  diaryAdd('./<archivo>', 'Ejecuta un archivo. Ej: ./light_rod, ./power_strike, ./heal');
+  diaryAdd('ls -la ~/', 'Muestra tu inventario con permisos y detalles.');
+
+  renderRoom();
+  updateHud();
+  updatePrompt();
+  tPrint('','out');
+  tPrint('  ╔════════════════════════════════════╗','title');
+  tPrint('  ║     AETHERIA · RPG + TERMINAL      ║','title');
+  tPrint('  ║   Aprende Linux mientras juegas    ║','title');
+  tPrint('  ╚════════════════════════════════════╝','title');
+  tPrint('','out');
+  tPrint('Comandos: ls, cd, cat, cp, ps, kill, disown, pwd, whoami, echo, man, clear','help');
+  tPrint('          diary, profile, save, load, ./. Para ayuda: "help" o "man <cmd>"','help');
+  tPrint('','out');
+  tPrint('🎮  Flechas: moverte.  📖  "cat diario.txt" o "diary" para tus comandos.','info');
+  tPrint('','out');
+  cmds.ls.run([]);
+  tPrint('','out');
+  tPrint('💡  Habla con los NPCs para aprender nuevos comandos.','info');
+  cmdEl.focus();
+  setInterval(enemyPatrol, 2500);
+  setInterval(npcPatrol, 2000);
+}
+
+// Click anywhere to focus
+document.addEventListener('click',()=>cmdEl.focus());
+
+boot();
+</script>
+</body>
+</html>
